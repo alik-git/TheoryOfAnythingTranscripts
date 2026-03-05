@@ -810,6 +810,7 @@ def llm_cleanup_turns(
 
 def ensure_dirs() -> None:
     PYTHON_OUT_DIR.mkdir(parents=True, exist_ok=True)
+    PYTHON_JSON_DIR.mkdir(parents=True, exist_ok=True)
     LLM_OUT_DIR.mkdir(parents=True, exist_ok=True)
     META_DIR.mkdir(parents=True, exist_ok=True)
     RAW_DIR.mkdir(parents=True, exist_ok=True)

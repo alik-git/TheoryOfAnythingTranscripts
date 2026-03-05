@@ -41,17 +41,33 @@
     btn.setAttribute('aria-label', theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
   }
 
+  function applyTheme(theme) {
+    if (window.jtd && typeof window.jtd.setTheme === 'function') {
+      window.jtd.setTheme(theme);
+      return true;
+    }
+    return false;
+  }
+
+  function applyPersistedThemeWithRetry(theme, attempts) {
+    if (applyTheme(theme)) return;
+    if (attempts <= 0) return;
+    setTimeout(function () {
+      applyPersistedThemeWithRetry(theme, attempts - 1);
+    }, 60);
+  }
+
   function initThemeToggle() {
     var btn = document.getElementById('theme-toggle');
     if (!btn) return;
-    applyLabel(btn, getCurrentTheme());
+    var currentTheme = getCurrentTheme();
+    applyPersistedThemeWithRetry(currentTheme, 20);
+    applyLabel(btn, currentTheme);
 
     btn.addEventListener('click', function () {
       var current = getCurrentTheme();
       var next = current === 'dark' ? 'light' : 'dark';
-      if (window.jtd && typeof window.jtd.setTheme === 'function') {
-        window.jtd.setTheme(next);
-      }
+      applyTheme(next);
       localStorage.setItem('jtd-theme', next);
       applyLabel(btn, next);
     });

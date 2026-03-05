@@ -10,7 +10,7 @@ This README is the canonical documentation for the repo.
 - Downloads audio and runs ASR transcription.
 - Runs speaker diarization and word-to-speaker alignment.
 - Produces deterministic cleanup output (`clean_python`).
-- Produces LLM-assisted label-correction output (`clean_llm`) and final readable transcript Markdown.
+- Produces LLM-assisted label-correction output (`clean_llm`) and a separate web formatting stage for final Markdown/pages.
 
 ## Quick Start
 
@@ -107,10 +107,11 @@ PodcastTranscriptor/
         md/                                        # deterministic cleaned markdown
         json/                                      # deterministic cleaned json
       04_clean_llm/
-        md/                                        # LLM-cleaned markdown
         json/                                      # LLM-cleaned canonical json
         raw/                                       # raw LLM outputs (json)
         meta/                                      # per-episode clean/validation stats
+      05_webformat/
+        md/                                        # website-facing markdown generated from 04_clean_llm/json
       old/                                         # archived/legacy scratch outputs
 
     logs/                                          # run logs (generated)
@@ -143,6 +144,7 @@ conda run -n pds_env python -m pdscript.cli transcribe
 conda run -n pds_env python -m pdscript.cli speaker
 conda run -n pds_env python -m pdscript.cli clean-python
 conda run -n pds_env python -m pdscript.cli clean-llm
+conda run -n pds_env python -m pdscript.cli render
 conda run -n pds_env python -m pdscript.cli status
 ```
 
@@ -225,20 +227,34 @@ conda run -n pds_env python -m pdscript.cli clean-llm \
   --llm-retry-backoff-sec 6
 ```
 Outputs:
-- `transcription/artifacts/04_clean_llm/md/<base>.clean.md`
 - `transcription/artifacts/04_clean_llm/json/<base>.clean.json`
 - `transcription/artifacts/04_clean_llm/raw/<base>.llm_raw.json`
 - `transcription/artifacts/04_clean_llm/meta/<base>.clean_meta.json`
 - Live partials while running:
-  - `*.clean.partial.md`
-  - `*.clean.partial.json`
-  - `*.llm_raw.partial.json`
+  - `transcription/artifacts/05_webformat/md/*.clean.partial.md`
+  - `transcription/artifacts/04_clean_llm/json/*.clean.partial.json`
+  - `transcription/artifacts/04_clean_llm/raw/*.llm_raw.partial.json`
 
 Current LLM behavior:
 - Works on chunked turns with context windows.
 - Returns speaker-label corrections by line index.
 - Pipeline applies label changes deterministically to original text/timestamps.
 - Includes retry/backoff handling and chunk-level logging.
+
+### Stage 6: Website Formatting (`render`)
+```bash
+# cd to repo root
+conda run -n pds_env python -m pdscript.cli render \
+  --clean-json-dir transcription/artifacts/04_clean_llm/json \
+  --web-md-dir transcription/artifacts/05_webformat/md \
+  --episodes-dir episodes
+```
+Outputs:
+- `transcription/artifacts/05_webformat/md/<base>.clean.md`
+- `episodes/<slug>.md` (Jekyll page with permalink `/episodes/<episode_number>/`)
+
+Purpose:
+- Decouples website formatting from LLM inference so page layout/theme changes do not require rerunning Stage 5.
 
 ## Monitoring
 

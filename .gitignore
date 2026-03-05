@@ -21,8 +21,7 @@ transcription/tmp/
 transcription/logs/*.log
 transcription/logs/*.path
 transcription/logs/old/
-transcription/manifests/pipeline_manifest.csv
-transcription/manifests/smoke_*.csv
+transcription/manifests/*.csv
 
 # Smoke-test and scratch artifacts
 transcription/smoke_test/*.wav

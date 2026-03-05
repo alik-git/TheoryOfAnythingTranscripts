@@ -23,10 +23,11 @@ PYTHON_ROOT = ARTIFACTS_ROOT / "03_clean_python"
 PYTHON_OUT_DIR = PYTHON_ROOT / "md"
 PYTHON_JSON_DIR = PYTHON_ROOT / "json"
 LLM_ROOT = ARTIFACTS_ROOT / "04_clean_llm"
-LLM_OUT_DIR = LLM_ROOT / "md"
 META_DIR = LLM_ROOT / "meta"
 RAW_DIR = LLM_ROOT / "raw"
 CLEAN_JSON_DIR = LLM_ROOT / "json"
+WEB_ROOT = ARTIFACTS_ROOT / "05_webformat"
+WEB_MD_DIR = WEB_ROOT / "md"
 ARCHIVE_DIR = ARTIFACTS_ROOT / "old" / "clean_dialogue_archive"
 LOG_DIR = TRANSCRIPTION_ROOT / "logs"
 MANIFEST_PATH = TRANSCRIPTION_ROOT / "manifests" / "pipeline_manifest.csv"
@@ -882,7 +883,7 @@ def llm_cleanup_turns(
 def ensure_dirs() -> None:
     PYTHON_OUT_DIR.mkdir(parents=True, exist_ok=True)
     PYTHON_JSON_DIR.mkdir(parents=True, exist_ok=True)
-    LLM_OUT_DIR.mkdir(parents=True, exist_ok=True)
+    WEB_MD_DIR.mkdir(parents=True, exist_ok=True)
     META_DIR.mkdir(parents=True, exist_ok=True)
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     CLEAN_JSON_DIR.mkdir(parents=True, exist_ok=True)
@@ -999,8 +1000,8 @@ def process_episode(
     title = slug_base_to_title(base)
     python_out = PYTHON_OUT_DIR / f"{base}.clean.md"
     python_json_out = PYTHON_JSON_DIR / f"{base}.clean.json"
-    llm_out = LLM_OUT_DIR / f"{base}.clean.md"
-    llm_partial_out = LLM_OUT_DIR / f"{base}.clean.partial.md"
+    web_md_out = WEB_MD_DIR / f"{base}.clean.md"
+    web_partial_out = WEB_MD_DIR / f"{base}.clean.partial.md"
     llm_raw_out = RAW_DIR / f"{base}.llm_raw.json"
     llm_raw_partial_out = RAW_DIR / f"{base}.llm_raw.partial.json"
     llm_json_out = CLEAN_JSON_DIR / f"{base}.clean.json"
@@ -1046,15 +1047,15 @@ def process_episode(
         python_state = "written"
 
     if mode in {"llm", "both"}:
-        if llm_out.exists() and not redo:
+        if web_md_out.exists() and llm_json_out.exists() and not redo:
             llm_state = "skipped"
         else:
-            archive_existing(llm_out, "clean_llm")
+            archive_existing(web_md_out, "webformat_md")
             archive_existing(llm_raw_out, "clean_llm_raw")
             archive_existing(llm_json_out, "clean_llm_json")
             archive_existing(meta_out, "clean_meta")
-            if llm_partial_out.exists():
-                llm_partial_out.unlink()
+            if web_partial_out.exists():
+                web_partial_out.unlink()
             if llm_raw_partial_out.exists():
                 llm_raw_partial_out.unlink()
             if llm_json_partial_out.exists():
@@ -1094,7 +1095,7 @@ def process_episode(
                     spotify_url=spotify_url,
                     apple_url=apple_url,
                 )
-                llm_partial_out.write_text(partial_text, encoding="utf-8")
+                web_partial_out.write_text(partial_text, encoding="utf-8")
                 llm_json_partial_out.write_text(
                     json.dumps(
                         {
@@ -1139,10 +1140,10 @@ def process_episode(
                 spotify_url=spotify_url,
                 apple_url=apple_url,
             )
-            llm_out.write_text(llm_text, encoding="utf-8")
+            web_md_out.write_text(llm_text, encoding="utf-8")
             write_site_episode_page(base, title, llm_text)
-            if llm_partial_out.exists():
-                llm_partial_out.unlink()
+            if web_partial_out.exists():
+                web_partial_out.unlink()
             llm_json_out.write_text(
                 json.dumps(
                     {
@@ -1273,10 +1274,10 @@ def main() -> None:
         base = base_from_segments_path(seg_csv)
         python_out = PYTHON_OUT_DIR / f"{base}.clean.md"
         python_json_out = PYTHON_JSON_DIR / f"{base}.clean.json"
-        llm_out = LLM_OUT_DIR / f"{base}.clean.md"
         llm_json_out = CLEAN_JSON_DIR / f"{base}.clean.json"
         llm_raw_out = RAW_DIR / f"{base}.llm_raw.json"
         meta_out = META_DIR / f"{base}.clean_meta.json"
+        web_md_out = WEB_MD_DIR / f"{base}.clean.md"
         manifest_row = manifest_by_seg.get(seg_csv.name)
         log(f"[{i}/{len(seg_files)}] start base={base}")
         try:
@@ -1297,7 +1298,7 @@ def main() -> None:
                     llm_state=llm_state,
                     python_out=python_out,
                     python_json_out=python_json_out,
-                    llm_out=llm_out,
+                    llm_out=web_md_out,
                     llm_json_out=llm_json_out,
                     llm_raw_out=llm_raw_out,
                     meta_out=meta_out,
@@ -1324,7 +1325,7 @@ def main() -> None:
                     llm_state=llm_state_err,
                     python_out=python_out,
                     python_json_out=python_json_out,
-                    llm_out=llm_out,
+                    llm_out=web_md_out,
                     llm_json_out=llm_json_out,
                     llm_raw_out=llm_raw_out,
                     meta_out=meta_out,

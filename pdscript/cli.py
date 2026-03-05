@@ -17,6 +17,7 @@ BUILD_MANIFEST_SCRIPT = SCRIPTS_DIR / "build_manifest.py"
 TRANSCRIBE_SCRIPT = SCRIPTS_DIR / "transcribe_batch.py"
 SPEAKER_SCRIPT = SCRIPTS_DIR / "speaker_batch.py"
 CLEAN_SCRIPT = SCRIPTS_DIR / "clean_dialogue_batch.py"
+RENDER_SCRIPT = SCRIPTS_DIR / "render_transcripts.py"
 
 DEFAULT_MANIFEST = TRANSCRIPTION_ROOT / "manifests" / "pipeline_manifest.csv"
 ARTIFACTS_ROOT = TRANSCRIPTION_ROOT / "artifacts"
@@ -26,6 +27,10 @@ DEFAULT_DIARIZATION_ROOT = ARTIFACTS_ROOT / "02_diarization"
 DEFAULT_SEGMENTS_DIR = DEFAULT_DIARIZATION_ROOT / "debug"
 DEFAULT_CLEAN_PY_ROOT = ARTIFACTS_ROOT / "03_clean_python"
 DEFAULT_CLEAN_LLM_ROOT = ARTIFACTS_ROOT / "04_clean_llm"
+DEFAULT_CLEAN_JSON_DIR = DEFAULT_CLEAN_LLM_ROOT / "json"
+DEFAULT_WEBFORMAT_ROOT = ARTIFACTS_ROOT / "05_webformat"
+DEFAULT_WEB_MD_DIR = DEFAULT_WEBFORMAT_ROOT / "md"
+DEFAULT_EPISODES_DIR = REPO_ROOT / "episodes"
 DEFAULT_LOGS_DIR = TRANSCRIPTION_ROOT / "logs"
 DEFAULT_RSS_FEED_URL = "https://anchor.fm/s/14b6fc10/podcast/rss"
 DEFAULT_APPLE_SHOW_ID = "1503194218"
@@ -246,8 +251,29 @@ def run_status(args: argparse.Namespace) -> None:
         LOGGER.error("Could not read log tail: %s: %s", type(exc).__name__, exc)
 
 
+def run_render(args: argparse.Namespace) -> None:
+    cmd = [
+        sys.executable,
+        str(RENDER_SCRIPT),
+        "--manifest-path",
+        str(args.manifest),
+        "--clean-json-dir",
+        str(args.clean_json_dir),
+        "--web-md-dir",
+        str(args.web_md_dir),
+        "--episodes-dir",
+        str(args.episodes_dir),
+        "--max-episodes",
+        str(args.max_episodes),
+        "--log-file",
+        str(args.log_file),
+    ]
+    add_bool_arg(cmd, "--redo", args.redo)
+    run_cmd(cmd)
+
+
 def run_all(args: argparse.Namespace) -> None:
-    LOGGER.info("[pipeline] Stage 1/5: manifest")
+    LOGGER.info("[pipeline] Stage 1/6: manifest")
     run_manifest(
         args.episodes_csv,
         str(args.manifest),
@@ -255,14 +281,16 @@ def run_all(args: argparse.Namespace) -> None:
         args.rss_feed_url,
         args.apple_show_id,
     )
-    LOGGER.info("[pipeline] Stage 2/5: transcribe")
+    LOGGER.info("[pipeline] Stage 2/6: transcribe")
     run_transcribe(args)
-    LOGGER.info("[pipeline] Stage 3/5: speaker")
+    LOGGER.info("[pipeline] Stage 3/6: speaker")
     run_speaker(args)
-    LOGGER.info("[pipeline] Stage 4/5: clean-python")
+    LOGGER.info("[pipeline] Stage 4/6: clean-python")
     run_clean(args, "python")
-    LOGGER.info("[pipeline] Stage 5/5: clean-llm")
+    LOGGER.info("[pipeline] Stage 5/6: clean-llm")
     run_clean(args, "llm")
+    LOGGER.info("[pipeline] Stage 6/6: render")
+    run_render(args)
     LOGGER.info("[pipeline] done")
 
 
@@ -280,6 +308,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--out-root", default=str(DEFAULT_DIARIZATION_ROOT))
     parser.add_argument("--segments-dir", default=str(DEFAULT_SEGMENTS_DIR))
     parser.add_argument("--logs-dir", default=str(DEFAULT_LOGS_DIR))
+    parser.add_argument("--clean-json-dir", default=str(DEFAULT_CLEAN_JSON_DIR))
+    parser.add_argument("--web-md-dir", default=str(DEFAULT_WEB_MD_DIR))
+    parser.add_argument("--episodes-dir", default=str(DEFAULT_EPISODES_DIR))
     parser.add_argument("--log-file", default="", help="Pipeline log file path. Defaults to transcription/logs/pipeline_<timestamp>.log")
     parser.add_argument("--max-episodes", type=int, default=0)
     parser.add_argument("--model-size", default="small")
@@ -312,6 +343,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("clean-python", help="Run deterministic cleanup stage.")
     sub.add_parser("clean-llm", help="Run LLM cleanup stage.")
     sub.add_parser("clean-both", help="Run both cleanup stages in one call.")
+    sub.add_parser("render", help="Render website markdown/pages from clean JSON (no LLM calls).")
     sub.add_parser("status", help="Show manifest summary and latest log tail.")
     sub.add_parser("all", help="Run all stages sequentially.")
     return parser
@@ -357,6 +389,9 @@ def main() -> None:
         return
     if cmd == "status":
         run_status(args)
+        return
+    if cmd == "render":
+        run_render(args)
         return
     if cmd == "all":
         run_all(args)

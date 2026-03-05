@@ -1,0 +1,21 @@
+title: Theory of Anything Transcripts
+description: Searchable episode transcripts for the Theory of Anything podcast.
+theme: just-the-docs
+
+url: https://alik-git.github.io
+baseurl: /TheoryOfAnythingTranscripts
+
+search_enabled: true
+heading_anchors: true
+
+aux_links:
+  GitHub Repository: https://github.com/alik-git/TheoryOfAnythingTranscripts
+
+nav_external_links:
+  - title: Podcast on Spotify
+    url: https://open.spotify.com/show/0bmymUJs50SVO1WkqfrccB
+
+back_to_top: true
+back_to_top_text: Back to top
+
+footer_content: "Copyright &copy; 2026 Theory of Anything Transcripts."

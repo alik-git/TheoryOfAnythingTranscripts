@@ -274,6 +274,29 @@ find transcription/artifacts -type f \( -name '*.partial.txt' -o -name '*.partia
 - Target: GitHub Pages + Jekyll (`just-the-docs` theme) using generated Markdown transcripts.
 - For public repos, GitHub Pages hosting is free (subject to GitHub Pages usage limits).
 
+### GitHub Pages Setup (Just the Docs)
+This repo now includes:
+- `_config.yml` (site config)
+- `Gemfile` (Jekyll + just-the-docs gems)
+- `.github/workflows/pages.yml` (build + deploy workflow)
+- `index.md` and `episodes/index.md` (site entry pages)
+
+To enable publishing:
+1. Push these files to `main`.
+2. In GitHub, open `Settings -> Pages`.
+3. Set `Source` to `GitHub Actions`.
+4. Wait for the `Deploy Jekyll site to Pages` workflow to finish.
+
+Published URL pattern:
+- `https://alik-git.github.io/TheoryOfAnythingTranscripts/`
+
+### Local Preview (Optional)
+```bash
+# cd to repo root
+bundle install
+bundle exec jekyll serve
+```
+
 ## Notes
 - Keep `dev_log.md` concise with timestamped `##` headings.
 - Keep legacy artifacts under `transcription/artifacts/old/`.

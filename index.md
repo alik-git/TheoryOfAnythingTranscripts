@@ -1,10 +1,10 @@
 ---
 layout: home
-title: Theory of Anything Transcripts
+title: Episode Transcripts for the Theory of Anything Podcast
 nav_order: 1
 ---
 
-# Theory of Anything Transcripts
+# Episode Transcripts for the Theory of Anything Podcast
 
 > Unofficial AI-generated transcripts. These may contain mistakes.
 

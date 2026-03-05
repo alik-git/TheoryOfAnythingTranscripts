@@ -12,12 +12,12 @@ import time
 import traceback
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Mapping, Optional, Text
 
 import numpy as np
 import soundfile as sf
 import torch
 import torchaudio
-from faster_whisper import WhisperModel
 from huggingface_hub import get_token
 from pyannote.audio import Pipeline
 
@@ -32,6 +32,88 @@ SPEAKER_COLORS = {
     "SPEAKER_04": "#9467bd",
     "UNKNOWN": "#7f7f7f",
 }
+
+
+class DiarizationLogHook:
+    """Log pyannote internal step progress into standard logs."""
+
+    def __init__(
+        self,
+        *,
+        episode_title: str,
+        progress_step_pct: int = 5,
+        min_log_interval_sec: float = 1.5,
+    ) -> None:
+        self.episode_title = episode_title
+        self.progress_step_pct = max(1, min(25, int(progress_step_pct)))
+        self.min_log_interval_sec = max(0.2, float(min_log_interval_sec))
+        self._next_pct_by_step: dict[str, int] = {}
+        self._last_log_ts: dict[str, float] = {}
+        self._seen_step_start: set[str] = set()
+        self._seen_step_completed: set[str] = set()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return
+
+    def __call__(
+        self,
+        step_name: Text,
+        step_artifact: Any,
+        file: Optional[Mapping] = None,
+        total: Optional[int] = None,
+        completed: Optional[int] = None,
+    ) -> None:
+        step = str(step_name)
+        now = time.time()
+
+        if step not in self._seen_step_start:
+            self._seen_step_start.add(step)
+            self._next_pct_by_step[step] = self.progress_step_pct
+            self._last_log_ts[step] = 0.0
+            LOGGER.info(
+                "[diarization-progress] %s step=%s started",
+                self.episode_title,
+                step,
+            )
+
+        if completed is None or total is None or total <= 0:
+            return
+
+        if step in self._seen_step_completed:
+            return
+
+        pct = int(min(100, max(0, (float(completed) / float(total)) * 100.0)))
+        next_pct = self._next_pct_by_step.get(step, self.progress_step_pct)
+        last_ts = self._last_log_ts.get(step, 0.0)
+        should_log = pct >= next_pct or completed >= total
+        if not should_log:
+            return
+        if now - last_ts < self.min_log_interval_sec and completed < total:
+            return
+
+        LOGGER.info(
+            "[diarization-progress] %s step=%s %s/%s (%s%%)",
+            self.episode_title,
+            step,
+            completed,
+            total,
+            pct,
+        )
+        self._last_log_ts[step] = now
+
+        if completed >= total:
+            self._seen_step_completed.add(step)
+            self._next_pct_by_step[step] = 100
+            LOGGER.info(
+                "[diarization-progress] %s step=%s completed",
+                self.episode_title,
+                step,
+            )
+        else:
+            self._next_pct_by_step[step] = next_pct + self.progress_step_pct
 
 
 def setup_logging(log_file: str = "") -> None:
@@ -152,6 +234,55 @@ def start_episode_telemetry_monitor(
     thread = threading.Thread(target=_loop, daemon=True)
     thread.start()
     return stop_event, thread
+
+
+def init_diar_pipeline_with_retries(
+    *,
+    hf_token: str | None,
+    device: str,
+    retries: int,
+    retry_delay_sec: float,
+    gpu_failure_policy: str,
+) -> Pipeline:
+    pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-community-1", token=hf_token)
+    if device != "cuda":
+        LOGGER.info("diar_pipeline_device=cpu")
+        return pipeline
+    if not torch.cuda.is_available():
+        if gpu_failure_policy == "error":
+            raise RuntimeError("CUDA requested for diarization but torch.cuda.is_available() is False.")
+        LOGGER.warning("CUDA unavailable for diarization; falling back to CPU.")
+        LOGGER.info("diar_pipeline_device=cpu")
+        return pipeline
+
+    last_exc: Exception | None = None
+    for attempt in range(1, max(1, retries) + 1):
+        try:
+            pipeline.to(torch.device("cuda"))
+            LOGGER.info("diar_pipeline_device=cuda")
+            return pipeline
+        except Exception as exc:
+            last_exc = exc
+            LOGGER.warning(
+                "Diarization pipeline CUDA init failed (attempt=%s): %s: %s",
+                attempt,
+                type(exc).__name__,
+                exc,
+            )
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+            time.sleep(max(0.5, retry_delay_sec))
+    if gpu_failure_policy == "error":
+        raise RuntimeError(f"Failed to initialize diarization pipeline on CUDA after retries: {last_exc}")
+    LOGGER.warning(
+        "Failed to initialize diarization pipeline on CUDA after retries; falling back to CPU. last_error=%s: %s",
+        type(last_exc).__name__ if last_exc else "unknown",
+        last_exc,
+    )
+    LOGGER.info("diar_pipeline_device=cpu")
+    return pipeline
 
 
 def load_manifest(path: Path) -> tuple[list[dict], list[str]]:
@@ -302,6 +433,31 @@ def words_to_utterances(words: list[dict]) -> list[dict]:
     return cleaned
 
 
+def load_transcript_words(transcript_json_path: Path) -> tuple[list[dict], float]:
+    payload = json.loads(transcript_json_path.read_text(encoding="utf-8"))
+    segments = payload.get("segments", [])
+    total_duration = float(payload.get("duration") or 0.0)
+    out_words: list[dict] = []
+    for seg in segments:
+        for w in (seg.get("words") or []):
+            try:
+                start = float(w.get("start"))
+                end = float(w.get("end"))
+            except Exception:
+                continue
+            token = (w.get("word") or "").strip()
+            if not token:
+                continue
+            out_words.append(
+                {
+                    "start": start,
+                    "end": end,
+                    "text": token,
+                }
+            )
+    return out_words, total_duration
+
+
 def write_csv(path: Path, rows: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = ["start", "end", "speaker", "speaker_conf", "text"]
@@ -363,13 +519,16 @@ def diarize_audio(
     audio_path: Path,
     min_speakers: int,
     max_speakers: int,
+    hook: Optional[object] = None,
 ) -> list[dict]:
     waveform, sample_rate = load_waveform(audio_path)
-    diarization_output = pipeline(
-        {"waveform": waveform, "sample_rate": sample_rate},
-        min_speakers=min_speakers,
-        max_speakers=max_speakers,
-    )
+    kwargs = {
+        "min_speakers": min_speakers,
+        "max_speakers": max_speakers,
+    }
+    if hook is not None:
+        kwargs["hook"] = hook
+    diarization_output = pipeline({"waveform": waveform, "sample_rate": sample_rate}, **kwargs)
 
     if hasattr(diarization_output, "write_rttm"):
         diarization = diarization_output
@@ -402,18 +561,36 @@ def main() -> None:
         default=str(TRANSCRIPTION_ROOT / "artifacts" / "01_whisper_transcript" / "audio"),
     )
     parser.add_argument(
+        "--transcripts-dir",
+        default=str(TRANSCRIPTION_ROOT / "artifacts" / "01_whisper_transcript" / "transcripts"),
+    )
+    parser.add_argument(
         "--out-root",
         default=str(TRANSCRIPTION_ROOT / "artifacts" / "02_diarization"),
     )
     parser.add_argument("--model-size", default="small")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--compute-type", default="int8_float16")
+    parser.add_argument(
+        "--gpu-failure-policy",
+        choices=["fallback", "error"],
+        default="fallback",
+        help="When --device=cuda and CUDA init fails: fallback to CPU or fail fast.",
+    )
     parser.add_argument("--max-episodes", type=int, default=0)
     parser.add_argument("--episode-progress-step", type=int, default=5)
+    parser.add_argument(
+        "--diarization-progress-step",
+        type=int,
+        default=5,
+        help="Percent step for diarization progress logs.",
+    )
     parser.add_argument("--partial-every-segments", type=int, default=8)
     parser.add_argument("--min-speakers", type=int, default=1)
     parser.add_argument("--max-speakers", type=int, default=15)
     parser.add_argument("--telemetry-interval-sec", type=int, default=30)
+    parser.add_argument("--gpu-init-retries", type=int, default=3)
+    parser.add_argument("--gpu-init-retry-delay-sec", type=float, default=5.0)
     parser.add_argument("--log-file", default="", help="Optional log file path.")
     parser.add_argument("--redo", action="store_true")
     args = parser.parse_args()
@@ -426,6 +603,7 @@ def main() -> None:
 
     manifest_path = Path(args.manifest)
     audio_dir = Path(args.audio_dir)
+    transcripts_dir = Path(args.transcripts_dir)
     out_root = Path(args.out_root)
     md_dir = out_root / "md"
     diar_dir = out_root / "diarization"
@@ -453,13 +631,13 @@ def main() -> None:
     hf_token = os.getenv("HF_TOKEN") or os.getenv("HUGGINGFACE_TOKEN") or get_token()
     LOGGER.info("hf_token_set=%s", bool(hf_token))
 
-    whisper = WhisperModel(args.model_size, device=args.device, compute_type=args.compute_type)
-    diar_pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-community-1", token=hf_token)
-    if torch.cuda.is_available() and args.device == "cuda":
-        diar_pipeline.to(torch.device("cuda"))
-        LOGGER.info("diar_pipeline_device=cuda")
-    else:
-        LOGGER.info("diar_pipeline_device=cpu")
+    diar_pipeline = init_diar_pipeline_with_retries(
+        hf_token=hf_token,
+        device=args.device,
+        retries=max(1, int(args.gpu_init_retries)),
+        retry_delay_sec=max(0.5, float(args.gpu_init_retry_delay_sec)),
+        gpu_failure_policy=args.gpu_failure_policy,
+    )
 
     attempted = 0
     total_eligible = len(eligible)
@@ -520,12 +698,17 @@ def main() -> None:
                 },
             )
             LOGGER.info("[stage] diarization: %s", title)
-            diar_segments = diarize_audio(
-                diar_pipeline,
-                audio_path,
-                min_speakers=max(1, args.min_speakers),
-                max_speakers=max(1, args.max_speakers),
-            )
+            with DiarizationLogHook(
+                episode_title=title,
+                progress_step_pct=max(1, min(25, args.diarization_progress_step)),
+            ) as diar_hook:
+                diar_segments = diarize_audio(
+                    diar_pipeline,
+                    audio_path,
+                    min_speakers=max(1, args.min_speakers),
+                    max_speakers=max(1, args.max_speakers),
+                    hook=diar_hook,
+                )
 
             write_json(diar_json_path, {"segments": diar_segments})
             write_json(
@@ -549,42 +732,49 @@ def main() -> None:
                         f"{float(seg['start']):.3f} {dur:.3f} <NA> <NA> {seg['speaker']} <NA> <NA>\n"
                     )
 
-            stage_ref["stage"] = "asr+alignment"
-            LOGGER.info("[stage] asr+alignment: %s", title)
-            segments_iter, info = whisper.transcribe(
-                str(audio_path),
-                word_timestamps=True,
-                vad_filter=True,
-                beam_size=5,
-            )
+            stage_ref["stage"] = "alignment"
+            LOGGER.info("[stage] alignment (from Stage-2 transcript words): %s", title)
+            transcript_json_path = Path((row.get("transcript_json") or "").strip())
+            transcript_candidates = []
+            if transcript_json_path:
+                transcript_candidates.append(transcript_json_path)
+            transcript_candidates.append(transcripts_dir / f"{base_name}.json")
+            transcript_candidates.append(transcripts_dir / f"{legacy_guid_name}.json")
+            transcript_json_path = next((p for p in transcript_candidates if p.exists()), transcript_candidates[0])
+            if not transcript_json_path.exists():
+                raise FileNotFoundError(
+                    f"Missing transcript_json for alignment: {transcript_json_path}. "
+                    "Run transcription stage first."
+                )
 
-            total_duration = float(info.duration or 0.0)
+            transcript_words, total_duration = load_transcript_words(transcript_json_path)
+            if not transcript_words:
+                raise RuntimeError(
+                    f"No word timestamps found in {transcript_json_path}. "
+                    "Rerun transcription stage with word_timestamps enabled."
+                )
+
             next_mark = max(1, min(25, args.episode_progress_step))
             words: list[dict] = []
-            seg_counter = 0
-
-            for seg in segments_iter:
-                seg_counter += 1
-                for w in seg.words or []:
-                    if w.start is None or w.end is None:
-                        continue
-                    speaker, conf = assign_speaker(float(w.start), float(w.end), diar_segments)
-                    words.append(
-                        {
-                            "start": float(w.start),
-                            "end": float(w.end),
-                            "speaker": speaker,
-                            "speaker_conf": round(conf, 3),
-                            "text": (w.word or "").strip(),
-                        }
-                    )
-
-                if seg_counter % max(1, args.partial_every_segments) == 0 and words:
+            chunk_counter = 0
+            for tw in transcript_words:
+                speaker, conf = assign_speaker(float(tw["start"]), float(tw["end"]), diar_segments)
+                words.append(
+                    {
+                        "start": float(tw["start"]),
+                        "end": float(tw["end"]),
+                        "speaker": speaker,
+                        "speaker_conf": round(conf, 3),
+                        "text": tw["text"],
+                    }
+                )
+                chunk_counter += 1
+                if chunk_counter % max(1, args.partial_every_segments * 30) == 0 and words:
                     partial_utt = words_to_utterances(words)
                     write_markdown(partial_md_path, title, partial_utt, partial=True)
 
                 if total_duration > 0:
-                    pct = int(min(100, max(0, (float(seg.end) / total_duration) * 100)))
+                    pct = int(min(100, max(0, (float(tw["end"]) / total_duration) * 100)))
                     while pct >= next_mark and next_mark <= 100:
                         LOGGER.info("[episode-progress] %s: %s%%", title, next_mark)
                         next_mark += max(1, min(25, args.episode_progress_step))

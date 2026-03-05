@@ -169,6 +169,7 @@ def transcribe_file(model: WhisperModel, audio_path: Path) -> dict:
         str(audio_path),
         vad_filter=True,
         beam_size=5,
+        word_timestamps=True,
     )
 
     data = {
@@ -178,12 +179,24 @@ def transcribe_file(model: WhisperModel, audio_path: Path) -> dict:
         "segments": [],
     }
     for seg in segments:
+        words = []
+        for w in (seg.words or []):
+            if w.start is None or w.end is None:
+                continue
+            words.append(
+                {
+                    "start": float(w.start),
+                    "end": float(w.end),
+                    "word": (w.word or "").strip(),
+                }
+            )
         data["segments"].append(
             {
                 "id": seg.id,
                 "start": seg.start,
                 "end": seg.end,
                 "text": seg.text,
+                "words": words,
             }
         )
     return data
@@ -202,6 +215,7 @@ def transcribe_file_with_progress(
         str(audio_path),
         vad_filter=True,
         beam_size=5,
+        word_timestamps=True,
     )
 
     total_duration = float(info.duration or 0.0)
@@ -217,12 +231,24 @@ def transcribe_file_with_progress(
         LOGGER.info("[episode-progress] %s: duration unknown", episode_label)
 
     for seg in segments:
+        words = []
+        for w in (seg.words or []):
+            if w.start is None or w.end is None:
+                continue
+            words.append(
+                {
+                    "start": float(w.start),
+                    "end": float(w.end),
+                    "word": (w.word or "").strip(),
+                }
+            )
         data["segments"].append(
             {
                 "id": seg.id,
                 "start": seg.start,
                 "end": seg.end,
                 "text": seg.text,
+                "words": words,
             }
         )
 
@@ -258,6 +284,12 @@ def main() -> None:
     parser.add_argument("--model-size", default="small")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--compute-type", default="int8_float16")
+    parser.add_argument(
+        "--gpu-failure-policy",
+        choices=["fallback", "error"],
+        default="fallback",
+        help="When --device=cuda and CUDA init fails: fallback to CPU or fail fast.",
+    )
     parser.add_argument("--max-episodes", type=int, default=0)
     parser.add_argument("--download-retries", type=int, default=3)
     parser.add_argument("--retry-delay-sec", type=float, default=3.0)
@@ -277,9 +309,17 @@ def main() -> None:
 
     try:
         model = load_model(args.model_size, args.device, args.compute_type)
-    except Exception:
+    except Exception as exc:
         if args.device == "cuda":
-            LOGGER.warning("CUDA model load failed; falling back to CPU int8.")
+            if args.gpu_failure_policy == "error":
+                raise RuntimeError(
+                    f"CUDA model load failed and gpu-failure-policy=error: {type(exc).__name__}: {exc}"
+                ) from exc
+            LOGGER.warning(
+                "CUDA model load failed (%s: %s); falling back to CPU int8.",
+                type(exc).__name__,
+                exc,
+            )
             model = load_model(args.model_size, "cpu", "int8")
         else:
             raise

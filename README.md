@@ -290,6 +290,13 @@ find transcription/artifacts -type f \( -name '*.partial.txt' -o -name '*.partia
 - Target: GitHub Pages + Jekyll (`just-the-docs` theme) using generated Markdown transcripts.
 - For public repos, GitHub Pages hosting is free (subject to GitHub Pages usage limits).
 
+### Website Quick Setup
+1. Use Jekyll with the `just-the-docs` theme (`_config.yml` + `Gemfile`).
+2. Keep generated transcript pages under `episodes/` (produced by `pdscript.cli render`).
+3. Use GitHub Actions for build/deploy (`.github/workflows/pages.yml`).
+4. In GitHub `Settings -> Pages`, set source to `GitHub Actions`.
+5. Push to `main` to publish site updates.
+
 ### GitHub Pages Setup (Just the Docs)
 This repo now includes:
 - `_config.yml` (site config)

@@ -1,0 +1,13 @@
+/* Prevent sidebar site title from clipping at the top on small/long titles. */
+.site-title,
+.site-title:link,
+.site-title:visited {
+  line-height: 1.35;
+  padding-top: 0.2rem;
+  display: block;
+}
+
+/* Keep the title comfortably below the top edge on mobile/compact layouts. */
+.site-header {
+  padding-top: 0.25rem;
+}

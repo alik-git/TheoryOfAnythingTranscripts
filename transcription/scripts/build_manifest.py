@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 import argparse
 import csv
+import json
 import logging
 import sys
 from pathlib import Path
 from datetime import datetime
+import urllib.request
+import xml.etree.ElementTree as ET
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -55,6 +58,8 @@ def ordered_fieldnames(existing: list[str]) -> list[str]:
         "pub_date_iso",
         "audio_url",
         "episode_url",
+        "spotify_url",
+        "apple_url",
         "source_transcript_url",
         "status",
         "audio_path",
@@ -101,7 +106,49 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Optional log file path (in addition to stdout).",
     )
+    parser.add_argument(
+        "--rss-feed-url",
+        default="",
+        help="Optional podcast RSS feed URL to enrich per-episode links.",
+    )
+    parser.add_argument(
+        "--apple-show-id",
+        default="",
+        help="Optional Apple Podcasts show ID for per-episode Apple links.",
+    )
     return parser.parse_args()
+
+
+def fetch_rss_episode_links(rss_feed_url: str) -> dict[str, str]:
+    if not rss_feed_url:
+        return {}
+    with urllib.request.urlopen(rss_feed_url, timeout=30) as resp:
+        data = resp.read()
+    root = ET.fromstring(data)
+    by_guid: dict[str, str] = {}
+    for item in root.findall("./channel/item"):
+        guid = (item.findtext("guid") or "").strip()
+        link = (item.findtext("link") or "").strip()
+        if guid and link:
+            by_guid[guid] = link
+    return by_guid
+
+
+def fetch_apple_episode_links(apple_show_id: str) -> dict[str, str]:
+    if not apple_show_id:
+        return {}
+    url = f"https://itunes.apple.com/lookup?id={apple_show_id}&entity=podcastEpisode&limit=200"
+    with urllib.request.urlopen(url, timeout=30) as resp:
+        payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+    by_guid: dict[str, str] = {}
+    for row in payload.get("results", []):
+        if row.get("wrapperType") != "podcastEpisode":
+            continue
+        guid = (row.get("episodeGuid") or "").strip()
+        track_url = (row.get("trackViewUrl") or "").strip()
+        if guid and track_url:
+            by_guid[guid] = track_url
+    return by_guid
 
 
 def main() -> None:
@@ -119,6 +166,21 @@ def main() -> None:
     with episodes_csv.open(newline="", encoding="utf-8") as f:
         episodes = list(csv.DictReader(f))
 
+    rss_links: dict[str, str] = {}
+    apple_links: dict[str, str] = {}
+    if args.rss_feed_url:
+        try:
+            rss_links = fetch_rss_episode_links(args.rss_feed_url)
+            LOGGER.info("RSS link enrichment loaded: %s episodes", len(rss_links))
+        except Exception as exc:
+            LOGGER.warning("RSS link enrichment failed: %s: %s", type(exc).__name__, exc)
+    if args.apple_show_id:
+        try:
+            apple_links = fetch_apple_episode_links(args.apple_show_id)
+            LOGGER.info("Apple link enrichment loaded: %s episodes", len(apple_links))
+        except Exception as exc:
+            LOGGER.warning("Apple link enrichment failed: %s: %s", type(exc).__name__, exc)
+
     existing_fields, existing_rows, existing_by_guid = load_existing_manifest(manifest_csv)
     existing_order = [r.get("guid", "") for r in existing_rows if (r.get("guid") or "").strip()]
 
@@ -131,6 +193,8 @@ def main() -> None:
         audio_url = (ep.get("audio_url") or "").strip()
         episode_url = (ep.get("link") or "").strip()
         source_transcript_url = (ep.get("transcript_url") or "").strip()
+        spotify_url = rss_links.get(guid, "")
+        apple_url = apple_links.get(guid, "")
         prev = dict(existing_by_guid.get(guid, {}))
         is_new = not bool(prev)
 
@@ -140,6 +204,8 @@ def main() -> None:
         prev["pub_date_iso"] = pub_date_iso
         prev["audio_url"] = audio_url
         prev["episode_url"] = episode_url
+        prev["spotify_url"] = spotify_url or (prev.get("spotify_url") or "")
+        prev["apple_url"] = apple_url or (prev.get("apple_url") or "")
         prev["source_transcript_url"] = source_transcript_url
         if is_new:
             prev.setdefault("status", "pending")

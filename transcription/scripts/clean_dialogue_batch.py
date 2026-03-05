@@ -30,6 +30,11 @@ CLEAN_JSON_DIR = LLM_ROOT / "json"
 ARCHIVE_DIR = ARTIFACTS_ROOT / "old" / "clean_dialogue_archive"
 LOG_DIR = TRANSCRIPTION_ROOT / "logs"
 MANIFEST_PATH = TRANSCRIPTION_ROOT / "manifests" / "pipeline_manifest.csv"
+SITE_EPISODES_DIR = REPO_ROOT / "episodes"
+
+PODCAST_SPOTIFY_SHOW_URL = "https://open.spotify.com/show/0bmymUJs50SVO1WkqfrccB"
+PODCAST_APPLE_SHOW_URL = "https://podcasts.apple.com/us/podcast/the-theory-of-anything/id1503194218"
+PODCAST_TRANSCRIPTOR_URL = "https://github.com/alik-git/PodcastTranscriptor"
 
 MANIFEST_CLEAN_COLUMNS = [
     "clean_python_status",
@@ -65,6 +70,25 @@ COLOR_NAMES = [
     "Navy",
 ]
 
+SPEAKER_COLOR_HEX = {
+    "blue": "#2563eb",
+    "red": "#dc2626",
+    "green": "#16a34a",
+    "orange": "#ea580c",
+    "purple": "#9333ea",
+    "teal": "#0f766e",
+    "brown": "#92400e",
+    "pink": "#db2777",
+    "gray": "#4b5563",
+    "cyan": "#0891b2",
+    "gold": "#ca8a04",
+    "indigo": "#4f46e5",
+    "magenta": "#c026d3",
+    "olive": "#65a30d",
+    "navy": "#1e3a8a",
+    "unknown": "#6b7280",
+}
+
 CONNECTOR_STARTS = {
     "and",
     "but",
@@ -88,6 +112,50 @@ CONNECTOR_STARTS = {
     "he",
     "she",
 }
+
+SYSTEM_PROMPT_LABEL_CORRECTION = """
+You are a speaker-label correction assistant for AI generated transcripts.
+Do NOT rewrite transcript text. Do NOT remove/add/reorder spoken words.
+Your job is to identify mislabeled speaker tags in CORE_TO_REVIEW.
+The model used to generate the transcripts often makes mistakes, you have to correct them.
+Most often, a word or few words (especially those at the beginning or the end of a sentence) are mislabeled as the wrong speaker (especially as "Unknown").
+You must use your common sense understanding of the surrounding context to correct the mistake. Most often you need to merge the mislabeled word or words by assigning them to the speaker of the sentence before or after the mislabeled word or words, based on context.
+Here are some examples.
+1. In a sentence that is clearly by one speaker, a single word or a few words are labeled another speaker, or an Unknown speaker.
+Example A input:
+1) Blue: Hello, welcome
+2) Red: to
+3) Blue: the podcast
+Example A output:
+{"corrections": [{"line": 2, "speaker": "Blue"}]}
+Example B input:
+1) Blue: This week on the podcast,
+2) Unknown: Bruce makes
+3) Blue: his most epic statement...
+Example B output:
+{"corrections": [{"line": 2, "speaker": "Blue"}]}
+2. When multiple people are speaking, some words get mislabeled as the wrong speaker, which is clear from the context.
+Example C input:
+1) Unknown: And
+2) Red: so it sounds like they're just
+3) Unknown: But
+4) Red: I'm pretty sure they said they were quoting that source.
+5) Unknown: So
+6) Red: that's why he did.
+7) Blue: Yeah.
+8) Red: So
+9) Blue: that's why Dan said that.
+Example C output:
+{"corrections": [{"line": 1, "speaker": "Red"}, {"line": 3, "speaker": "Red"}, {"line": 5, "speaker": "Red"}, {"line": 8, "speaker": "Blue"}]}
+Words like "Yeah", "Sure", "Okay", "Maybe", "Right", "Makes Sense", "Gotcha", "Interesting", "Hmm", can be spoken as a full sentence so likely should not be merged even if surrounded by different speakers.
+Words like "is", "so", "I", "the", "as", "was", "many", "to", are likely not spoken as a full sentence and should be merged if surrounded by different speakers.
+Use surrounding context to infer whether each line's speaker label is correct.
+Unknown labels with only 1-3 words should usually be reassigned based on context.
+Non-Unknown labels can also be wrong; correct them when context clearly indicates a different speaker.
+Use only speakers from Allowed speakers.
+Return JSON only in this format: {"corrections": [{"line": 12, "speaker": "Red"}]}
+Only include lines that should change. If none: {"corrections": []}
+""".strip()
 
 _LOG_FP = None
 
@@ -255,21 +323,19 @@ def render_clean_md(title: str, turns: list[dict], speaker_map: dict[str, str], 
 def render_named_turns_md(
     title: str,
     turns: list[dict],
-    source_name: str,
-    model_name: str,
-    notes: list[str] | None = None,
+    spotify_url: str,
+    apple_url: str,
 ) -> str:
+    spotify_link = spotify_url or PODCAST_SPOTIFY_SHOW_URL
+    apple_link = apple_url or PODCAST_APPLE_SHOW_URL
     out = [
-        f"# {title} - Clean Transcript",
+        f"# {title}",
         "",
-        f"- Source: `{source_name}`",
-        f"- Post-processing: LLM formatting pass (`{model_name}`)",
+        f"- Links to this episode: [Spotify]({spotify_link}) | [Apple Podcasts]({apple_link})",
+        f"- This transcript was generated with AI using [PodcastTranscriptor]({PODCAST_TRANSCRIPTOR_URL}).",
+        "- It may contain mistakes. Please check against the actual podcast.",
         "- Speakers are anonymized as color names.",
-        "- Goal: preserve wording while improving readability.",
     ]
-    if notes:
-        for n in notes:
-            out.append(f"- {n}")
     out.extend(
         [
             "",
@@ -283,9 +349,58 @@ def render_named_turns_md(
         start_sec = int(round(float(t.get("timestamp_sec", 0) or 0)))
         if not text:
             continue
-        out.append(f"[{sec_to_hms(start_sec)}] {speaker_name}: {text}")
+        color = SPEAKER_COLOR_HEX.get(str(speaker_name).strip().lower(), "#374151")
+        ts = f"<em>[{sec_to_hms(start_sec)}]</em>"
+        spk = f"<em><strong><span style=\"color:{color}\">{speaker_name}:</span></strong></em>"
+        out.append(f"{ts} {spk} {text}")
         out.append("")
+    out.extend(
+        [
+            "---",
+            "",
+            f"*Links to this episode:* [Spotify]({spotify_link}) | [Apple Podcasts]({apple_link})",
+            "",
+            f"*Generated with AI using [PodcastTranscriptor]({PODCAST_TRANSCRIPTOR_URL}). May contain mistakes; please verify against the actual podcast.*",
+            "",
+        ]
+    )
     return "\n".join(out).rstrip() + "\n"
+
+
+def infer_episode_links(title: str, manifest_row: dict | None) -> tuple[str, str]:
+    row = manifest_row or {}
+    spotify = (row.get("spotify_url") or "").strip()
+    apple = (row.get("apple_url") or "").strip()
+    if not spotify:
+        spotify = PODCAST_SPOTIFY_SHOW_URL
+    if not apple:
+        apple = PODCAST_APPLE_SHOW_URL
+    return spotify, apple
+
+
+def write_site_episode_page(base: str, title: str, body_md: str) -> None:
+    SITE_EPISODES_DIR.mkdir(parents=True, exist_ok=True)
+    parts = base.split("__")
+    date_part = parts[0] if parts else "unknown-date"
+    slug_part = parts[1] if len(parts) >= 2 else base
+    out_name = f"{date_part}-{slug_part}.md"
+    out_path = SITE_EPISODES_DIR / out_name
+
+    m = re.search(r"Episode\s+(\d+)", title, flags=re.IGNORECASE)
+    nav_order = int(m.group(1)) if m else 9999
+    safe_title = title.replace('"', '\\"')
+    permalink_line = f"permalink: /episodes/{nav_order}/\n" if m else ""
+
+    front_matter = (
+        "---\n"
+        "layout: default\n"
+        f"title: \"{safe_title}\"\n"
+        "parent: Episodes\n"
+        f"nav_order: {nav_order}\n"
+        f"{permalink_line}"
+        "---\n\n"
+    )
+    out_path.write_text(front_matter + body_md, encoding="utf-8")
 
 
 def chunk_turns_for_llm(turns: list[dict], max_chars: int) -> list[list[dict]]:
@@ -647,45 +762,7 @@ def llm_cleanup_turns(
         sentence_overrun_words=max(0, cfg.chunk_sentence_overrun_words),
     )
 
-    system_prompt = (
-        "You are a speaker-label correction assistant for transcript turns.\n"
-        "Do NOT rewrite transcript text. Do NOT remove/add/reorder spoken words.\n"
-        "Your only job is to identify mislabeled speaker tags in CORE_TO_REVIEW.\n"
-        "Use surrounding context to infer whether each line's speaker label is correct.\n"
-        "Unknown labels with only 1-3 words are highly likely mislabels and should usually be reassigned based on context.\n"
-        "Non-Unknown labels can also be wrong; correct them when context clearly indicates a different speaker.\n"
-        "Use only speakers from Allowed speakers.\n"
-        "Return JSON only in this format: {\"corrections\": [{\"line\": 12, \"speaker\": \"Red\"}]}\n"
-        "Only include lines that should change. If none: {\"corrections\": []}\n"
-        "\n"
-        "Example A input:\n"
-        "1) [00:00:00] Blue: Hello, welcome\n"
-        "2) [00:00:04] Red: to\n"
-        "3) [00:00:04] Blue: the podcast\n"
-        "Example A output:\n"
-        "{\"corrections\": [{\"line\": 2, \"speaker\": \"Blue\"}]}\n"
-        "\n"
-        "Example B input:\n"
-        "1) [00:00:00] Blue: This week on the podcast,\n"
-        "2) [00:00:04] Unknown: Bruce makes\n"
-        "3) [00:00:04] Blue: his most epic statement...\n"
-        "Example B output:\n"
-        "{\"corrections\": [{\"line\": 2, \"speaker\": \"Blue\"}]}\n"
-        "\n"
-        "Example C input:\n"
-        "1) [00:07:27] Unknown: And\n"
-        "2) [00:07:27] Red: so it sounds like they're just\n"
-        "3) [00:07:30] Unknown: But\n"
-        "4) [00:07:30] Red: I'm pretty sure they said they were quoting that source.\n"
-        "5) [00:07:35] Unknown: So\n"
-        "6) [00:07:35] Red: that's why he did.\n"
-        "7) [00:07:36] Blue: Yeah.\n"
-        "8) [00:07:37] Unknown: So\n"
-        "9) [00:07:37] Blue: that's why Dan\n"
-        "10) [00:07:38] Red: said that.\n"
-        "Example C output:\n"
-        "{\"corrections\": [{\"line\": 1, \"speaker\": \"Red\"}, {\"line\": 3, \"speaker\": \"Red\"}, {\"line\": 5, \"speaker\": \"Red\"}, {\"line\": 8, \"speaker\": \"Blue\"}]}\n"
-    )
+    system_prompt = SYSTEM_PROMPT_LABEL_CORRECTION
 
     for idx, (core_start, core_end) in enumerate(core_chunks, start=1):
         cstart = context_start_by_words(turns, core_start, overlap_words=max(0, cfg.overlap_words))
@@ -696,18 +773,12 @@ def llm_cleanup_turns(
         prev_clean_tail = "(none)"
         if cleaned_turns:
             prev_clean_tail = last_n_words(cleaned_turns[-1]["text"], 25) or "(none)"
-        before_text = (
-            "\n".join(f"[{sec_to_hms(t.get('timestamp_sec', 0))}] {t['speaker_name']}: {t['text']}" for t in context_before)
-            or "(none)"
-        )
+        before_text = "\n".join(f"{t['speaker_name']}: {t['text']}" for t in context_before) or "(none)"
         core_text = "\n".join(
-            f"{i + 1}) [{sec_to_hms(t.get('timestamp_sec', 0))}] {t['speaker_name']}: {t['text']}"
+            f"{i + 1}) {t['speaker_name']}: {t['text']}"
             for i, t in enumerate(core_chunk)
         )
-        after_text = (
-            "\n".join(f"[{sec_to_hms(t.get('timestamp_sec', 0))}] {t['speaker_name']}: {t['text']}" for t in context_after)
-            or "(none)"
-        )
+        after_text = "\n".join(f"{t['speaker_name']}: {t['text']}" for t in context_after) or "(none)"
         user_prompt = (
             f"Chunk {idx}/{len(core_chunks)}\n"
             f"Allowed speakers: {', '.join(allowed)}\n"
@@ -922,6 +993,7 @@ def process_episode(
     max_gap_sec: float,
     llm_cfg: LLMConfig,
     redo: bool,
+    manifest_row: dict | None = None,
 ) -> tuple[str, str]:
     base = base_from_segments_path(seg_csv)
     title = slug_base_to_title(base)
@@ -999,6 +1071,7 @@ def process_episode(
                 }
                 for t in rows
             ]
+            spotify_url, apple_url = infer_episode_links(title, manifest_row)
             raw_records_partial: list[dict] = []
 
             def write_partial(
@@ -1015,13 +1088,11 @@ def process_episode(
                     partial_turns,
                     max_words=300,
                 )
-                partial_model_name = f"{llm_cfg.model} partial {chunk_idx}/{chunk_total}"
                 partial_text = render_named_turns_md(
                     title,
                     partial_rebalanced,
-                    seg_csv.name,
-                    partial_model_name,
-                    notes=label_correction_notes(corr_summary),
+                    spotify_url=spotify_url,
+                    apple_url=apple_url,
                 )
                 llm_partial_out.write_text(partial_text, encoding="utf-8")
                 llm_json_partial_out.write_text(
@@ -1065,11 +1136,11 @@ def process_episode(
             llm_text = render_named_turns_md(
                 title,
                 cleaned_turns,
-                seg_csv.name,
-                llm_cfg.model,
-                notes=label_correction_notes(final_corr_summary),
+                spotify_url=spotify_url,
+                apple_url=apple_url,
             )
             llm_out.write_text(llm_text, encoding="utf-8")
+            write_site_episode_page(base, title, llm_text)
             if llm_partial_out.exists():
                 llm_partial_out.unlink()
             llm_json_out.write_text(
@@ -1215,6 +1286,7 @@ def main() -> None:
                 max_gap_sec=max(0.1, args.max_gap_sec),
                 llm_cfg=llm_cfg,
                 redo=args.redo,
+                manifest_row=manifest_row,
             )
             log(f"[{i}/{len(seg_files)}] {base} python={py_state} llm={llm_state}")
             if manifest_row is not None:

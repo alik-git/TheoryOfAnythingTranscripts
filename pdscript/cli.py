@@ -27,6 +27,8 @@ DEFAULT_SEGMENTS_DIR = DEFAULT_DIARIZATION_ROOT / "debug"
 DEFAULT_CLEAN_PY_ROOT = ARTIFACTS_ROOT / "03_clean_python"
 DEFAULT_CLEAN_LLM_ROOT = ARTIFACTS_ROOT / "04_clean_llm"
 DEFAULT_LOGS_DIR = TRANSCRIPTION_ROOT / "logs"
+DEFAULT_RSS_FEED_URL = "https://anchor.fm/s/14b6fc10/podcast/rss"
+DEFAULT_APPLE_SHOW_ID = "1503194218"
 LOGGER = logging.getLogger("pdscript.cli")
 
 
@@ -69,7 +71,13 @@ def add_bool_arg(cmd: list[str], flag: str, enabled: bool) -> None:
         cmd.append(flag)
 
 
-def run_manifest(episodes_csv: str, manifest: str, log_file: str) -> None:
+def run_manifest(
+    episodes_csv: str,
+    manifest: str,
+    log_file: str,
+    rss_feed_url: str = "",
+    apple_show_id: str = "",
+) -> None:
     cmd = [
         sys.executable,
         str(BUILD_MANIFEST_SCRIPT),
@@ -80,6 +88,10 @@ def run_manifest(episodes_csv: str, manifest: str, log_file: str) -> None:
     ]
     if episodes_csv:
         cmd.extend(["--episodes-csv", episodes_csv])
+    if rss_feed_url:
+        cmd.extend(["--rss-feed-url", rss_feed_url])
+    if apple_show_id:
+        cmd.extend(["--apple-show-id", apple_show_id])
     run_cmd(cmd)
 
 
@@ -236,7 +248,13 @@ def run_status(args: argparse.Namespace) -> None:
 
 def run_all(args: argparse.Namespace) -> None:
     LOGGER.info("[pipeline] Stage 1/5: manifest")
-    run_manifest(args.episodes_csv, str(args.manifest), str(args.log_file))
+    run_manifest(
+        args.episodes_csv,
+        str(args.manifest),
+        str(args.log_file),
+        args.rss_feed_url,
+        args.apple_show_id,
+    )
     LOGGER.info("[pipeline] Stage 2/5: transcribe")
     run_transcribe(args)
     LOGGER.info("[pipeline] Stage 3/5: speaker")
@@ -254,6 +272,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--all", action="store_true", help="Run all stages sequentially.")
     parser.add_argument("--episodes-csv", default="", help="Input episodes source CSV path.")
+    parser.add_argument("--rss-feed-url", default=DEFAULT_RSS_FEED_URL)
+    parser.add_argument("--apple-show-id", default=DEFAULT_APPLE_SHOW_ID)
     parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST), help="Pipeline manifest path.")
     parser.add_argument("--audio-dir", default=str(DEFAULT_AUDIO_DIR))
     parser.add_argument("--output-dir", default=str(DEFAULT_TRANSCRIPTS_DIR))
@@ -312,7 +332,13 @@ def main() -> None:
         LOGGER.info("pipeline_log=%s", args.log_file)
 
     if cmd == "manifest":
-        run_manifest(args.episodes_csv, str(args.manifest), str(args.log_file))
+        run_manifest(
+            args.episodes_csv,
+            str(args.manifest),
+            str(args.log_file),
+            args.rss_feed_url,
+            args.apple_show_id,
+        )
         return
     if cmd == "transcribe":
         run_transcribe(args)

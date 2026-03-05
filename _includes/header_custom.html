@@ -1,0 +1,40 @@
+<button id="theme-toggle" class="site-button" type="button" style="margin-left:0.5rem;">
+  Dark mode
+</button>
+
+<script>
+(function () {
+  function getCurrentTheme() {
+    var theme = localStorage.getItem('jtd-theme');
+    if (theme === 'dark' || theme === 'light') return theme;
+    return 'light';
+  }
+
+  function applyLabel(btn, theme) {
+    btn.textContent = theme === 'dark' ? 'Light mode' : 'Dark mode';
+    btn.setAttribute('aria-label', theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
+  }
+
+  function initThemeToggle() {
+    var btn = document.getElementById('theme-toggle');
+    if (!btn) return;
+    applyLabel(btn, getCurrentTheme());
+
+    btn.addEventListener('click', function () {
+      var current = getCurrentTheme();
+      var next = current === 'dark' ? 'light' : 'dark';
+      if (window.jtd && typeof window.jtd.setTheme === 'function') {
+        window.jtd.setTheme(next);
+      }
+      localStorage.setItem('jtd-theme', next);
+      applyLabel(btn, next);
+    });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initThemeToggle);
+  } else {
+    initThemeToggle();
+  }
+})();
+</script>

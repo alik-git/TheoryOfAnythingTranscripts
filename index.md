@@ -28,3 +28,7 @@ nav_order: 1
 ## Search
 
 Use the built-in search box in the top-right to search all indexed pages.
+
+## About
+
+This was a vibecoding project for [Ali](https://alihkw.com) for fun. The code is available here: [TheoryOfAnythingTranscripts](https://github.com/alik-git/TheoryOfAnythingTranscripts).

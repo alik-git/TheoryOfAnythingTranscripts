@@ -1,6 +1,22 @@
-<button id="theme-toggle" class="site-button" type="button" style="margin-left:0.5rem;">
-  Dark mode
-</button>
+<style>
+#theme-toggle {
+  margin-left: 0.5rem;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--border-color, #d0d7de);
+  border-radius: 999px;
+  background: var(--body-background-color, #ffffff);
+  color: var(--body-text-color, #24292f);
+  font: inherit;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+#theme-toggle:hover {
+  background: var(--code-background-color, #f6f8fa);
+}
+</style>
+
+<button id="theme-toggle" type="button">🌙&nbsp;Dark mode</button>
 
 <script>
 (function () {
@@ -11,7 +27,7 @@
   }
 
   function applyLabel(btn, theme) {
-    btn.textContent = theme === 'dark' ? 'Light mode' : 'Dark mode';
+    btn.innerHTML = theme === 'dark' ? '☀️&nbsp;Light mode' : '🌙&nbsp;Dark mode';
     btn.setAttribute('aria-label', theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode');
   }
 

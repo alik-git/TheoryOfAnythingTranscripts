@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Runtime and logs
+*.pid
+nohup.out
+
+# Conda / env noise
+.python-version
+.env
+.env.*
+dev_log.md
+
+# Transcription runtime artifacts
+transcription/artifacts/
+transcription/old/
+transcription/models/
+transcription/tmp/
+transcription/logs/*.log
+transcription/logs/*.path
+transcription/logs/old/
+transcription/manifests/pipeline_manifest.csv
+transcription/manifests/smoke_*.csv
+
+# Smoke-test and scratch artifacts
+transcription/smoke_test/*.wav
+transcription/smoke_test/*.rttm
+transcription/smoke_test/*.json
+transcription/smoke_test/*.md
+transcription/smoke_test/*_debug.csv
+
+episodes_source.csv

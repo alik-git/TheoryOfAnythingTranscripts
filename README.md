@@ -22,6 +22,13 @@ This README is the canonical documentation for the repo.
 - Hugging Face account/token (for diarization model)
 - OpenAI API key (for LLM cleanup pass)
 
+### Python Version Compatibility
+- Minimum required: Python `3.11` (see `pyproject.toml` `requires-python = ">=3.11"`).
+- Tested with: Python `3.11` (Conda env `pds_env`).
+- Expected to work with: Python `3.11+`.
+- Python `3.9/3.10` are not supported.
+- `pdscript.cli` also enforces this at runtime and exits early on Python `<3.11`.
+
 ### 2) Create and Prepare the Conda Env (`pds_env`)
 ```bash
 # cd to repo root

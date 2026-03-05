@@ -8,14 +8,15 @@ baseurl: /TheoryOfAnythingTranscripts
 search_enabled: true
 heading_anchors: true
 
-aux_links:
-  GitHub Repository: https://github.com/alik-git/TheoryOfAnythingTranscripts
+aux_links: {}
 
 nav_external_links:
   - title: Podcast on Spotify
     url: https://open.spotify.com/show/0bmymUJs50SVO1WkqfrccB
+  - title: Podcast on Apple Podcasts
+    url: https://podcasts.apple.com/us/podcast/the-theory-of-anything/id1503194218
 
 back_to_top: true
 back_to_top_text: Back to top
 
-footer_content: "Copyright &copy; 2026 Theory of Anything Transcripts."
+footer_content: "Copyright &copy; 2026 Theory of Anything Transcripts. Made with <a href=\"https://github.com/alik-git/PodcastTranscriptor\">PodcastTranscriptor</a> by Ali Kuwajerwala."

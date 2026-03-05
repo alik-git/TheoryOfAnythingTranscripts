@@ -10,11 +10,9 @@ nav_order: 1
 
 This site publishes searchable transcript pages generated from the repository pipeline.
 
-## Podcast Links
+## Links To The Podcast
 
-- [Spotify](https://open.spotify.com/show/0bmymUJs50SVO1WkqfrccB)
-- [Apple Podcasts](https://podcasts.apple.com/us/podcast/the-theory-of-anything/id1503194218)
-- [GitHub repo](https://github.com/alik-git/TheoryOfAnythingTranscripts)
+[Spotify](https://open.spotify.com/show/0bmymUJs50SVO1WkqfrccB) | [Apple Podcasts](https://podcasts.apple.com/us/podcast/the-theory-of-anything/id1503194218)
 
 ## Episodes
 

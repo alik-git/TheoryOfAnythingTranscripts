@@ -332,7 +332,7 @@ def render_named_turns_md(
     out = [
         f"# {title}",
         "",
-        f"- Links to this episode: [Spotify]({spotify_link}) | [Apple Podcasts]({apple_link})",
+        f"- Links to this episode: [Spotify]({spotify_link}) / [Apple Podcasts]({apple_link})",
         f"- This transcript was generated with AI using [PodcastTranscriptor]({PODCAST_TRANSCRIPTOR_URL}).",
         "- **It may contain mistakes.** Please check against the actual podcast.",
         "- Speakers are denoted as color names.",
@@ -352,14 +352,14 @@ def render_named_turns_md(
             continue
         color = SPEAKER_COLOR_HEX.get(str(speaker_name).strip().lower(), "#374151")
         ts = f"<em>[{sec_to_hms(start_sec)}]</em>"
-        spk = f"<em><strong><span style=\"color:{color}\">{speaker_name}:</span></strong></em>"
+        spk = f"<strong><span style=\"color:{color}\">{speaker_name}:</span></strong>"
         out.append(f"{ts} {spk} {text}")
         out.append("")
     out.extend(
         [
             "---",
             "",
-            f"*Links to this episode:* [Spotify]({spotify_link}) | [Apple Podcasts]({apple_link})",
+            f"*Links to this episode:* [Spotify]({spotify_link}) / [Apple Podcasts]({apple_link})",
             "",
             f"*Generated with AI using [PodcastTranscriptor]({PODCAST_TRANSCRIPTOR_URL}). May contain mistakes; please verify against the actual podcast.*",
             "",

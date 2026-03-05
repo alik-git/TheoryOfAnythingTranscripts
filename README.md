@@ -306,6 +306,19 @@ To enable publishing:
 Published URL pattern:
 - `https://alik-git.github.io/TheoryOfAnythingTranscripts/`
 
+### Pages Deploy Trigger Scope
+To reduce unnecessary GitHub Actions usage, automatic Pages deploys run only when website files change:
+- `.github/workflows/pages.yml`
+- `_config.yml`
+- `Gemfile`, `Gemfile.lock`
+- `_includes/**`
+- `assets/**`
+- `index.md`
+- `episodes/**`
+
+If you push only transcription pipeline code (for example under `pdscript/` or `transcription/scripts/`), Pages will not redeploy automatically.
+You can still trigger a deploy manually from the Actions tab using `workflow_dispatch`.
+
 ### Local Preview (Optional)
 ```bash
 # cd to repo root

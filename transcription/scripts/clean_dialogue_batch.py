@@ -4,7 +4,9 @@ import csv
 import json
 import os
 import re
+import shlex
 import shutil
+import sys
 import time
 from collections import Counter
 from dataclasses import dataclass
@@ -1251,6 +1253,7 @@ def main() -> None:
     global _LOG_FP
     _LOG_FP = log_file.open("a", encoding="utf-8")
     log(f"Run started. log_file={log_file}")
+    log(f"invocation={shlex.join([sys.executable, *sys.argv])}")
     log(f"Args: {vars(args)}")
 
     seg_dir = Path(args.segments_dir)
@@ -1266,6 +1269,31 @@ def main() -> None:
     else:
         log(f"Manifest not loaded or empty: {manifest_path}")
 
+    scoped_items: list[tuple[Path, dict | None]] = []
+    skipped_not_in_manifest = 0
+    for seg_csv in seg_files:
+        manifest_row = manifest_by_seg.get(seg_csv.name)
+        if manifest_row is None:
+            ep_num = _episode_num_from_text(base_from_segments_path(seg_csv).replace("__", " "))
+            if ep_num:
+                manifest_row = manifest_by_episode.get(ep_num)
+        if manifest_rows and manifest_row is None:
+            skipped_not_in_manifest += 1
+            log(f"[skip] not in scoped manifest seg_csv={seg_csv.name}")
+            continue
+        scoped_items.append((seg_csv, manifest_row))
+
+    if not scoped_items:
+        raise SystemExit(
+            f"No eligible segment CSV files found for manifest scope: {manifest_path}"
+            if manifest_rows
+            else f"No segment CSV files found in {seg_dir}"
+        )
+    log(
+        f"Eligible segment files: {len(scoped_items)} of {len(seg_files)} "
+        f"(skipped_not_in_manifest={skipped_not_in_manifest})"
+    )
+
     llm_cfg = LLMConfig(
         model=args.llm_model,
         temperature=args.llm_temperature,
@@ -1279,7 +1307,8 @@ def main() -> None:
     )
 
     processed = 0
-    for i, seg_csv in enumerate(seg_files, start=1):
+    total = len(scoped_items)
+    for i, (seg_csv, manifest_row) in enumerate(scoped_items, start=1):
         if args.max_episodes > 0 and processed >= args.max_episodes:
             break
         base = base_from_segments_path(seg_csv)
@@ -1289,12 +1318,7 @@ def main() -> None:
         llm_raw_out = RAW_DIR / f"{base}.llm_raw.json"
         meta_out = META_DIR / f"{base}.clean_meta.json"
         web_md_out = WEB_MD_DIR / f"{base}.clean.md"
-        manifest_row = manifest_by_seg.get(seg_csv.name)
-        if manifest_row is None:
-            ep_num = _episode_num_from_text(base.replace("__", " "))
-            if ep_num:
-                manifest_row = manifest_by_episode.get(ep_num)
-        log(f"[{i}/{len(seg_files)}] start base={base}")
+        log(f"[{i}/{total}] start base={base}")
         try:
             py_state, llm_state = process_episode(
                 seg_csv=seg_csv,
@@ -1304,7 +1328,7 @@ def main() -> None:
                 redo=args.redo,
                 manifest_row=manifest_row,
             )
-            log(f"[{i}/{len(seg_files)}] {base} python={py_state} llm={llm_state}")
+            log(f"[{i}/{total}] {base} python={py_state} llm={llm_state}")
             if manifest_row is not None:
                 update_manifest_row(
                     manifest_row,
@@ -1325,7 +1349,7 @@ def main() -> None:
             else:
                 log(f"[warn] no manifest row matched seg_csv={seg_csv.name}")
         except Exception as exc:
-            log(f"[{i}/{len(seg_files)}] {base} ERROR: {type(exc).__name__}: {exc}")
+            log(f"[{i}/{total}] {base} ERROR: {type(exc).__name__}: {exc}")
             if manifest_row is not None:
                 py_state_err = "not_requested"
                 llm_state_err = "not_requested"

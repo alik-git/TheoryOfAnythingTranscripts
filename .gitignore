@@ -22,6 +22,7 @@ transcription/logs/*.log
 transcription/logs/*.path
 transcription/logs/old/
 transcription/manifests/*.csv
+transcription/manifests/tmp/
 
 # Smoke-test and scratch artifacts
 transcription/smoke_test/*.wav

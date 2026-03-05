@@ -3,6 +3,7 @@ import argparse
 import csv
 import json
 import logging
+import shlex
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -123,6 +124,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     setup_logging(args.log_file)
+    LOGGER.info("invocation=%s", shlex.join([sys.executable, *sys.argv]))
 
     manifest_path = Path(args.manifest_path)
     clean_json_dir = Path(args.clean_json_dir)
@@ -139,22 +141,45 @@ def main() -> None:
     if not files:
         raise SystemExit(f"No clean JSON files found in {clean_json_dir}")
 
+    scoped_items: list[tuple[Path, str, dict | None]] = []
+    skipped_not_in_manifest = 0
+    for jf in files:
+        base = base_from_clean_json(jf)
+        row = by_base.get(base)
+        if row is None:
+            ep_num = _episode_num_from_text(base.replace("__", " "))
+            if ep_num:
+                row = by_episode_num.get(ep_num)
+        if rows and row is None:
+            skipped_not_in_manifest += 1
+            LOGGER.info("[skip] not in scoped manifest: %s", base)
+            continue
+        scoped_items.append((jf, base, row))
+
+    if not scoped_items:
+        raise SystemExit(
+            f"No eligible clean JSON files found for manifest scope: {manifest_path}"
+            if rows
+            else f"No clean JSON files found in {clean_json_dir}"
+        )
+    LOGGER.info(
+        "Eligible clean JSON files: %s of %s (skipped_not_in_manifest=%s)",
+        len(scoped_items),
+        len(files),
+        skipped_not_in_manifest,
+    )
+
     processed = 0
-    for i, jf in enumerate(files, start=1):
+    total = len(scoped_items)
+    for i, (jf, base, row) in enumerate(scoped_items, start=1):
         if args.max_episodes > 0 and processed >= args.max_episodes:
             break
-        base = base_from_clean_json(jf)
         md_out = web_md_dir / f"{base}.clean.md"
         if md_out.exists() and not args.redo:
             continue
         try:
             payload = json.loads(jf.read_text(encoding="utf-8"))
             turns = payload.get("turns", [])
-            row = by_base.get(base)
-            if row is None:
-                ep_num = _episode_num_from_text(base.replace("__", " "))
-                if ep_num:
-                    row = by_episode_num.get(ep_num)
             title = (row or {}).get("title") or slug_base_to_title(base)
             spotify, apple = infer_episode_links(title, row)
             if not spotify:
@@ -165,7 +190,7 @@ def main() -> None:
             md = render_named_turns_md(title=title, turns=turns, spotify_url=spotify, apple_url=apple)
             md_out.write_text(md, encoding="utf-8")
             write_site_episode_page(base, title, md)
-            LOGGER.info("[%s/%s] rendered %s", i, len(files), base)
+            LOGGER.info("[%s/%s] rendered %s", i, total, base)
 
             if row is not None:
                 row["clean_llm_md"] = str(md_out)
@@ -173,7 +198,7 @@ def main() -> None:
                 if fieldnames and rows:
                     write_manifest(manifest_path, fieldnames, rows)
         except Exception as exc:
-            LOGGER.error("[%s/%s] %s ERROR: %s: %s", i, len(files), base, type(exc).__name__, exc)
+            LOGGER.error("[%s/%s] %s ERROR: %s: %s", i, total, base, type(exc).__name__, exc)
         processed += 1
 
     LOGGER.info("Finished render. Episodes attempted: %s", processed)

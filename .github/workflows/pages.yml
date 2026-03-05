@@ -3,6 +3,15 @@ name: Deploy Jekyll site to Pages
 on:
   push:
     branches: ["main"]
+    paths:
+      - ".github/workflows/pages.yml"
+      - "_config.yml"
+      - "Gemfile"
+      - "Gemfile.lock"
+      - "_includes/**"
+      - "assets/**"
+      - "index.md"
+      - "episodes/**"
   workflow_dispatch:
 
 permissions:

@@ -54,22 +54,35 @@ def base_from_clean_json(path: Path) -> str:
     return path.stem
 
 
-def load_manifest(path: Path) -> tuple[list[str], list[dict], dict[str, dict]]:
+def _episode_num_from_text(text: str) -> str:
+    import re
+
+    m = re.search(r"\bepisode[-\s_:]*(\d+)\b", text or "", flags=re.IGNORECASE)
+    if not m:
+        return ""
+    return str(int(m.group(1)))
+
+
+def load_manifest(path: Path) -> tuple[list[str], list[dict], dict[str, dict], dict[str, dict]]:
     if not path.exists():
-        return [], [], {}
+        return [], [], {}, {}
     with path.open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         rows = list(reader)
         fieldnames = list(reader.fieldnames or [])
 
     by_base: dict[str, dict] = {}
+    by_episode_num: dict[str, dict] = {}
     for r in rows:
         seg = (r.get("speaker_segment_csv") or "").strip()
         if seg:
             name = Path(seg).name
             if name.endswith(".segments.csv"):
                 by_base[name[: -len(".segments.csv")]] = r
-    return fieldnames, rows, by_base
+        ep_num = _episode_num_from_text((r.get("title") or ""))
+        if ep_num and ep_num not in by_episode_num:
+            by_episode_num[ep_num] = r
+    return fieldnames, rows, by_base, by_episode_num
 
 
 def write_manifest(path: Path, fieldnames: list[str], rows: list[dict]) -> None:
@@ -119,7 +132,7 @@ def main() -> None:
     web_md_dir.mkdir(parents=True, exist_ok=True)
     episodes_dir.mkdir(parents=True, exist_ok=True)
 
-    fieldnames, rows, by_base = load_manifest(manifest_path)
+    fieldnames, rows, by_base, by_episode_num = load_manifest(manifest_path)
     fieldnames = ensure_clean_llm_columns(fieldnames)
 
     files = sorted(clean_json_dir.glob("*.clean.json"))
@@ -138,6 +151,10 @@ def main() -> None:
             payload = json.loads(jf.read_text(encoding="utf-8"))
             turns = payload.get("turns", [])
             row = by_base.get(base)
+            if row is None:
+                ep_num = _episode_num_from_text(base.replace("__", " "))
+                if ep_num:
+                    row = by_episode_num.get(ep_num)
             title = (row or {}).get("title") or slug_base_to_title(base)
             spotify, apple = infer_episode_links(title, row)
             if not spotify:

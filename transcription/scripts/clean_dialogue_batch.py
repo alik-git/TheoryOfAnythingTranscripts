@@ -334,8 +334,8 @@ def render_named_turns_md(
         "",
         f"- Links to this episode: [Spotify]({spotify_link}) | [Apple Podcasts]({apple_link})",
         f"- This transcript was generated with AI using [PodcastTranscriptor]({PODCAST_TRANSCRIPTOR_URL}).",
-        "- It may contain mistakes. Please check against the actual podcast.",
-        "- Speakers are anonymized as color names.",
+        "- **It may contain mistakes.** Please check against the actual podcast.",
+        "- Speakers are denoted as color names.",
     ]
     out.extend(
         [
@@ -910,19 +910,30 @@ def _ensure_manifest_columns(fieldnames: list[str]) -> list[str]:
     return out
 
 
-def load_manifest(path: Path) -> tuple[list[str], list[dict], dict[str, dict]]:
+def _episode_num_from_text(text: str) -> str:
+    m = re.search(r"\bepisode[-\s_:]*(\d+)\b", text or "", flags=re.IGNORECASE)
+    if not m:
+        return ""
+    return str(int(m.group(1)))
+
+
+def load_manifest(path: Path) -> tuple[list[str], list[dict], dict[str, dict], dict[str, dict]]:
     if not path.exists():
-        return [], [], {}
+        return [], [], {}, {}
     with path.open(newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         rows = list(reader)
         fieldnames = _ensure_manifest_columns(list(reader.fieldnames or []))
     by_seg_csv_name: dict[str, dict] = {}
+    by_episode_num: dict[str, dict] = {}
     for r in rows:
         seg_path = (r.get("speaker_segment_csv") or "").strip()
         if seg_path:
             by_seg_csv_name[Path(seg_path).name] = r
-    return fieldnames, rows, by_seg_csv_name
+        ep_num = _episode_num_from_text((r.get("title") or ""))
+        if ep_num and ep_num not in by_episode_num:
+            by_episode_num[ep_num] = r
+    return fieldnames, rows, by_seg_csv_name, by_episode_num
 
 
 def write_manifest(path: Path, fieldnames: list[str], rows: list[dict]) -> None:
@@ -1249,7 +1260,7 @@ def main() -> None:
     log(f"Discovered segment files: {len(seg_files)} in {seg_dir}")
 
     manifest_path = Path(args.manifest_path)
-    manifest_fieldnames, manifest_rows, manifest_by_seg = load_manifest(manifest_path)
+    manifest_fieldnames, manifest_rows, manifest_by_seg, manifest_by_episode = load_manifest(manifest_path)
     if manifest_rows:
         log(f"Manifest loaded: rows={len(manifest_rows)} path={manifest_path}")
     else:
@@ -1279,6 +1290,10 @@ def main() -> None:
         meta_out = META_DIR / f"{base}.clean_meta.json"
         web_md_out = WEB_MD_DIR / f"{base}.clean.md"
         manifest_row = manifest_by_seg.get(seg_csv.name)
+        if manifest_row is None:
+            ep_num = _episode_num_from_text(base.replace("__", " "))
+            if ep_num:
+                manifest_row = manifest_by_episode.get(ep_num)
         log(f"[{i}/{len(seg_files)}] start base={base}")
         try:
             py_state, llm_state = process_episode(

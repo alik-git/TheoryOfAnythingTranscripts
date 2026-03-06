@@ -592,7 +592,89 @@ def _scope_manifest_to_episodes(manifest_path: Path, episode_numbers: list[int],
     return scoped_path
 
 
+def _read_manifest_csv(path: Path) -> tuple[list[str], list[dict]]:
+    with path.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        return list(reader.fieldnames or []), list(reader)
+
+
+def _write_manifest_csv(path: Path, fieldnames: list[str], rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    tmp.replace(path)
+
+
+def _row_lookup_key(row: dict) -> tuple[str, str] | None:
+    for col in ("episode_guid", "guid", "segment_csv", "audio_url"):
+        val = (row.get(col) or "").strip()
+        if val:
+            return (col, val)
+    title = (row.get("title") or "").strip()
+    pub_date_iso = (row.get("pub_date_iso") or "").strip()
+    if title and pub_date_iso:
+        return ("title_pub_date_iso", f"{title}::{pub_date_iso}")
+    return None
+
+
+def _sync_scoped_manifest_to_global(scoped_manifest: Path, global_manifest: Path) -> None:
+    if scoped_manifest.resolve() == global_manifest.resolve():
+        return
+    if not scoped_manifest.exists() or not global_manifest.exists():
+        return
+
+    global_fields, global_rows = _read_manifest_csv(global_manifest)
+    scoped_fields, scoped_rows = _read_manifest_csv(scoped_manifest)
+    if not global_rows or not scoped_rows:
+        return
+
+    global_index: dict[tuple[str, str], dict] = {}
+    for row in global_rows:
+        key = _row_lookup_key(row)
+        if key is not None:
+            global_index[key] = row
+
+    # Preserve global column order while allowing scoped-only columns to propagate.
+    merged_fields = list(global_fields)
+    for field in scoped_fields:
+        if field not in merged_fields:
+            merged_fields.append(field)
+
+    updated = 0
+    missing = 0
+    for src in scoped_rows:
+        key = _row_lookup_key(src)
+        if key is None:
+            missing += 1
+            continue
+        dst = global_index.get(key)
+        if dst is None:
+            missing += 1
+            continue
+        for field in merged_fields:
+            if field in src:
+                dst[field] = src.get(field, "")
+            elif field not in dst:
+                dst[field] = ""
+        updated += 1
+
+    if updated:
+        _write_manifest_csv(global_manifest, merged_fields, global_rows)
+    LOGGER.info(
+        "Synced scoped manifest back to global: updated=%s missing=%s scoped=%s global=%s",
+        updated,
+        missing,
+        scoped_manifest,
+        global_manifest,
+    )
+
+
 def run_all(args: argparse.Namespace) -> None:
+    global_manifest = Path(args.manifest)
+    scoped_manifest: Path | None = None
     LOGGER.info("[pipeline] Stage 1/6: manifest")
     run_manifest(
         args.episodes_csv,
@@ -604,24 +686,27 @@ def run_all(args: argparse.Namespace) -> None:
     )
     if args.episode_number:
         episode_numbers = _parse_episode_numbers(args.episode_number)
-        args.manifest = str(
-            _scope_manifest_to_episodes(
-                Path(args.manifest),
-                episode_numbers,
-                reason="all",
-            )
+        scoped_manifest = _scope_manifest_to_episodes(
+            Path(args.manifest),
+            episode_numbers,
+            reason="all",
         )
-    LOGGER.info("[pipeline] Stage 2/6: transcribe")
-    run_transcribe(args)
-    LOGGER.info("[pipeline] Stage 3/6: speaker")
-    run_speaker(args)
-    LOGGER.info("[pipeline] Stage 4/6: clean-python")
-    run_clean(args, "python")
-    LOGGER.info("[pipeline] Stage 5/6: clean-llm")
-    run_clean(args, "llm")
-    LOGGER.info("[pipeline] Stage 6/6: render")
-    run_render(args)
-    LOGGER.info("[pipeline] done")
+        args.manifest = str(scoped_manifest)
+    try:
+        LOGGER.info("[pipeline] Stage 2/6: transcribe")
+        run_transcribe(args)
+        LOGGER.info("[pipeline] Stage 3/6: speaker")
+        run_speaker(args)
+        LOGGER.info("[pipeline] Stage 4/6: clean-python")
+        run_clean(args, "python")
+        LOGGER.info("[pipeline] Stage 5/6: clean-llm")
+        run_clean(args, "llm")
+        LOGGER.info("[pipeline] Stage 6/6: render")
+        run_render(args)
+        LOGGER.info("[pipeline] done")
+    finally:
+        if scoped_manifest is not None:
+            _sync_scoped_manifest_to_global(scoped_manifest, global_manifest)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -733,29 +818,50 @@ def main() -> None:
             args.apple_show_id,
         )
         return
+    global_manifest = Path(args.manifest)
+    scoped_manifest: Path | None = None
     if cmd in {"transcribe", "speaker", "clean-python", "clean-llm", "clean-both", "render"} and args.episode_number:
         episode_numbers = _parse_episode_numbers(args.episode_number)
-        args.manifest = str(
-            _scope_manifest_to_episodes(
-                Path(args.manifest),
-                episode_numbers,
-                reason=cmd,
-            )
+        scoped_manifest = _scope_manifest_to_episodes(
+            Path(args.manifest),
+            episode_numbers,
+            reason=cmd,
         )
+        args.manifest = str(scoped_manifest)
     if cmd == "transcribe":
-        run_transcribe(args)
+        try:
+            run_transcribe(args)
+        finally:
+            if scoped_manifest is not None:
+                _sync_scoped_manifest_to_global(scoped_manifest, global_manifest)
         return
     if cmd == "speaker":
-        run_speaker(args)
+        try:
+            run_speaker(args)
+        finally:
+            if scoped_manifest is not None:
+                _sync_scoped_manifest_to_global(scoped_manifest, global_manifest)
         return
     if cmd == "clean-python":
-        run_clean(args, "python")
+        try:
+            run_clean(args, "python")
+        finally:
+            if scoped_manifest is not None:
+                _sync_scoped_manifest_to_global(scoped_manifest, global_manifest)
         return
     if cmd == "clean-llm":
-        run_clean(args, "llm")
+        try:
+            run_clean(args, "llm")
+        finally:
+            if scoped_manifest is not None:
+                _sync_scoped_manifest_to_global(scoped_manifest, global_manifest)
         return
     if cmd == "clean-both":
-        run_clean(args, "both")
+        try:
+            run_clean(args, "both")
+        finally:
+            if scoped_manifest is not None:
+                _sync_scoped_manifest_to_global(scoped_manifest, global_manifest)
         return
     if cmd == "status":
         run_status(args)
@@ -767,7 +873,11 @@ def main() -> None:
         run_restore(args)
         return
     if cmd == "render":
-        run_render(args)
+        try:
+            run_render(args)
+        finally:
+            if scoped_manifest is not None:
+                _sync_scoped_manifest_to_global(scoped_manifest, global_manifest)
         return
     if cmd == "all":
         if not args.rss_feed_url:

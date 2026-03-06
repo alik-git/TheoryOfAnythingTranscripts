@@ -49,7 +49,21 @@ conda run -n pds_env python -m pip install \
   numpy
 ```
 
-### 3) Auth Setup
+### 3) Configure Podcast Metadata (YAML)
+Podcast/site-specific values are config-driven.
+
+- Active config: `transcription/config/podcast.yaml`
+- Starter template: `transcription/config/podcast.template.yaml`
+
+Required:
+- `podcast.rss_feed_url`
+
+Value precedence:
+1. CLI flag
+2. YAML config
+3. RSS-derived value (where available)
+
+### 4) Auth Setup
 ```bash
 # cd to repo root
 # Hugging Face (for pyannote model access)
@@ -91,8 +105,13 @@ PodcastTranscriptor/
   pdscript/
     __init__.py
     cli.py                                         # package CLI entrypoint (`python -m pdscript.cli`)
+    config.py                                      # YAML config loader/helpers
 
   transcription/
+    config/
+      podcast.yaml                                 # active podcast/site config
+      podcast.template.yaml                        # starter template for new podcasts
+
     manifests/
       pipeline_manifest.csv                        # global pipeline state by episode
 
@@ -101,6 +120,7 @@ PodcastTranscriptor/
       transcribe_batch.py
       speaker_batch.py
       clean_dialogue_batch.py
+      render_transcripts.py
 
     artifacts/
       01_whisper_transcript/

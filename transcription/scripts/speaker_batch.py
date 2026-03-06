@@ -421,6 +421,33 @@ def load_transcript_words(transcript_json_path: Path) -> tuple[list[dict], float
     return out_words, total_duration
 
 
+def _transcribe_complete_for_row(row: dict, audio_dir: Path, transcripts_dir: Path) -> bool:
+    guid = (row.get("guid") or "").strip()
+    title = (row.get("title") or "").strip()
+    pub_date_iso = (row.get("pub_date_iso") or "").strip()
+    base_name = build_base_name(guid, title, pub_date_iso)
+    legacy_guid_name = "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in guid)
+
+    audio_candidates = []
+    transcript_json_candidates = []
+
+    audio_path_str = (row.get("audio_path") or "").strip()
+    transcript_json_str = (row.get("transcript_json") or "").strip()
+    if audio_path_str:
+        audio_candidates.append(Path(audio_path_str))
+    if transcript_json_str:
+        transcript_json_candidates.append(Path(transcript_json_str))
+
+    audio_candidates.extend([audio_dir / f"{base_name}.mp3", audio_dir / f"{legacy_guid_name}.mp3"])
+    transcript_json_candidates.extend(
+        [transcripts_dir / f"{base_name}.json", transcripts_dir / f"{legacy_guid_name}.json"]
+    )
+
+    has_audio = any(p.exists() for p in audio_candidates)
+    has_transcript_json = any(p.exists() for p in transcript_json_candidates)
+    return has_audio and has_transcript_json
+
+
 def write_csv(path: Path, rows: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = ["start", "end", "speaker", "speaker_conf", "text"]
@@ -587,7 +614,11 @@ def main() -> None:
         ],
     )
 
-    eligible = [r for r in rows if (r.get("status") or "").strip() == "done"]
+    eligible = [
+        r
+        for r in rows
+        if (r.get("status") or "").strip() == "done" and _transcribe_complete_for_row(r, audio_dir, transcripts_dir)
+    ]
     pending = sum(1 for r in eligible if (r.get("speaker_status") or "").strip() != "done")
     LOGGER.info("Manifest loaded: total=%s eligible=%s to_process=%s redo=%s", len(rows), len(eligible), pending, args.redo)
 
@@ -606,6 +637,9 @@ def main() -> None:
     total_eligible = len(eligible)
     for idx, row in enumerate(rows, start=1):
         if (row.get("status") or "").strip() != "done":
+            continue
+        if not _transcribe_complete_for_row(row, audio_dir, transcripts_dir):
+            LOGGER.warning("[skip] missing Stage-1 outputs for title=%s", (row.get("title") or "").strip() or "<unknown>")
             continue
 
         speaker_status = (row.get("speaker_status") or "").strip()

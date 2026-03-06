@@ -63,6 +63,55 @@ def ordered_fieldnames(existing: list[str]) -> list[str]:
     return out
 
 
+def _exists(path_value: str) -> bool:
+    text = (path_value or "").strip()
+    if not text:
+        return False
+    return Path(text).exists()
+
+
+def reconcile_row_statuses(row: dict) -> dict:
+    """Normalize stale 'done' states when expected output files are missing."""
+    out = dict(row)
+
+    if (out.get("status") or "").strip() == "done":
+        has_audio = _exists(out.get("audio_path", ""))
+        has_txt = _exists(out.get("transcript_txt", ""))
+        has_json = _exists(out.get("transcript_json", ""))
+        if not (has_audio and has_txt and has_json):
+            out["status"] = "pending"
+            out["error"] = ""
+
+    if (out.get("speaker_status") or "").strip() == "done":
+        has_speaker = all(
+            _exists(out.get(col, ""))
+            for col in ["speaker_md", "speaker_diar_json", "speaker_word_csv", "speaker_segment_csv"]
+        )
+        if not has_speaker:
+            out["speaker_status"] = "pending"
+            out["speaker_error"] = ""
+
+    if (out.get("clean_python_status") or "").strip() == "done":
+        has_clean_py = _exists(out.get("clean_python_md", "")) and _exists(out.get("clean_python_json", ""))
+        if not has_clean_py:
+            out["clean_python_status"] = "pending"
+            out["clean_python_error"] = ""
+
+    if (out.get("clean_llm_status") or "").strip() == "done":
+        has_clean_llm = _exists(out.get("clean_llm_json", ""))
+        if not has_clean_llm:
+            out["clean_llm_status"] = "pending"
+            out["clean_llm_error"] = ""
+
+    if (out.get("web_status") or "").strip() == "done":
+        has_web = _exists(out.get("web_md", ""))
+        if not has_web:
+            out["web_status"] = "pending"
+            out["web_error"] = ""
+
+    return out
+
+
 def resolve_episodes_csv(explicit_path: str) -> Path:
     if explicit_path:
         return Path(explicit_path).expanduser().resolve()
@@ -210,7 +259,7 @@ def main() -> None:
             prev.setdefault("transcript_json", "")
             prev.setdefault("error", "")
             prev.setdefault("updated_at", now)
-        rows.append(prev)
+        rows.append(reconcile_row_statuses(prev))
 
     # Keep orphaned rows (if any) that are not currently in episodes CSV.
     episode_guids = {r["guid"] for r in rows}

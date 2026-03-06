@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import csv
+import json
 import logging
 import os
 import re
@@ -11,8 +12,11 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+from pdscript.config import DEFAULT_CONFIG_PATH, choose_value, get_cfg, load_config
+
 TRANSCRIPTION_ROOT = REPO_ROOT / "transcription"
 SCRIPTS_DIR = TRANSCRIPTION_ROOT / "scripts"
 
@@ -35,8 +39,6 @@ DEFAULT_WEBFORMAT_ROOT = ARTIFACTS_ROOT / "05_webformat"
 DEFAULT_WEB_MD_DIR = DEFAULT_WEBFORMAT_ROOT / "md"
 DEFAULT_EPISODES_DIR = REPO_ROOT / "episodes"
 DEFAULT_LOGS_DIR = TRANSCRIPTION_ROOT / "logs"
-DEFAULT_RSS_FEED_URL = "https://anchor.fm/s/14b6fc10/podcast/rss"
-DEFAULT_APPLE_SHOW_ID = "1503194218"
 LOGGER = logging.getLogger("pdscript.cli")
 
 STAGE_DIRS = {
@@ -126,6 +128,7 @@ def run_manifest(
     episodes_csv: str,
     manifest: str,
     log_file: str,
+    config_path: str,
     rss_feed_url: str = "",
     apple_show_id: str = "",
 ) -> None:
@@ -134,6 +137,8 @@ def run_manifest(
         str(BUILD_MANIFEST_SCRIPT),
         "--manifest-csv",
         manifest,
+        "--config-path",
+        config_path,
         "--log-file",
         log_file,
     ]
@@ -228,6 +233,8 @@ def run_clean(args: argparse.Namespace, mode: str) -> None:
     cmd = [
         sys.executable,
         str(CLEAN_SCRIPT),
+        "--config-path",
+        str(args.config_path),
         "--mode",
         mode,
         "--segments-dir",
@@ -314,6 +321,8 @@ def run_render(args: argparse.Namespace) -> None:
     cmd = [
         sys.executable,
         str(RENDER_SCRIPT),
+        "--config-path",
+        str(args.config_path),
         "--manifest-path",
         str(args.manifest),
         "--clean-json-dir",
@@ -399,7 +408,105 @@ def run_archive(args: argparse.Namespace) -> None:
         elif stage_dir == "05_webformat":
             (src / "md").mkdir(parents=True, exist_ok=True)
 
+    # Snapshot manifest + config alongside artifacts so restores are reproducible.
+    snapshot_root = archive_root / "_snapshot"
+    snapshot_manifest = snapshot_root / "manifests" / "pipeline_manifest.csv"
+    snapshot_manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest_src = Path(args.manifest)
+    if manifest_src.exists():
+        shutil.copy2(manifest_src, snapshot_manifest)
+        LOGGER.info("Archived manifest snapshot: %s", snapshot_manifest)
+    else:
+        LOGGER.warning("Manifest not found; skipping manifest snapshot: %s", manifest_src)
+
+    snapshot_cfg = snapshot_root / "config" / "podcast.yaml"
+    snapshot_cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg_src = Path(args.config_path)
+    if cfg_src.exists():
+        shutil.copy2(cfg_src, snapshot_cfg)
+        LOGGER.info("Archived config snapshot: %s", snapshot_cfg)
+    else:
+        LOGGER.warning("Config not found; skipping config snapshot: %s", cfg_src)
+
+    meta = {
+        "created_at_local": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "archive_root": str(archive_root),
+        "stages_requested": stages,
+        "stages_moved": moved,
+        "manifest_source": str(manifest_src),
+        "config_source": str(cfg_src),
+    }
+    (archive_root / "archive_meta.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
     LOGGER.info("Archive complete. root=%s moved=%s", archive_root, ",".join(moved) if moved else "none")
+
+
+def _resolve_archive_root(raw: str) -> Path:
+    val = (raw or "").strip()
+    if not val:
+        raise ValueError("Missing --restore-archive (path or archive folder name).")
+    cand = Path(val).expanduser()
+    if cand.exists():
+        return cand.resolve()
+    alt = (ARTIFACTS_ROOT / "old" / val).resolve()
+    if alt.exists():
+        return alt
+    raise FileNotFoundError(f"Archive not found: {val}")
+
+
+def _dir_has_files(path: Path) -> bool:
+    return path.exists() and any(path.iterdir())
+
+
+def run_restore(args: argparse.Namespace) -> None:
+    archive_root = _resolve_archive_root(args.restore_archive)
+    stages = _parse_archive_stages(args.restore_stages)
+    overwrite = bool(args.overwrite)
+
+    restored: list[str] = []
+    for stage_dir in stages:
+        src = archive_root / stage_dir
+        if not src.exists():
+            continue
+        dst = ARTIFACTS_ROOT / stage_dir
+        if _dir_has_files(dst):
+            if not overwrite:
+                raise RuntimeError(
+                    f"Destination not empty: {dst}. "
+                    "Re-run with --overwrite to replace current outputs."
+                )
+            shutil.rmtree(dst)
+        if dst.exists():
+            shutil.rmtree(dst)
+        shutil.copytree(src, dst)
+        restored.append(stage_dir)
+
+    snapshot_manifest = archive_root / "_snapshot" / "manifests" / "pipeline_manifest.csv"
+    if snapshot_manifest.exists():
+        manifest_dst = Path(args.manifest)
+        manifest_dst.parent.mkdir(parents=True, exist_ok=True)
+        if manifest_dst.exists() and not overwrite:
+            raise RuntimeError(
+                f"Manifest exists: {manifest_dst}. Re-run with --overwrite to replace it."
+            )
+        shutil.copy2(snapshot_manifest, manifest_dst)
+        LOGGER.info("Restored manifest snapshot: %s", manifest_dst)
+
+    snapshot_cfg = archive_root / "_snapshot" / "config" / "podcast.yaml"
+    if snapshot_cfg.exists():
+        cfg_dst = Path(args.config_path)
+        cfg_dst.parent.mkdir(parents=True, exist_ok=True)
+        if cfg_dst.exists() and not overwrite:
+            raise RuntimeError(
+                f"Config exists: {cfg_dst}. Re-run with --overwrite to replace it."
+            )
+        shutil.copy2(snapshot_cfg, cfg_dst)
+        LOGGER.info("Restored config snapshot: %s", cfg_dst)
+
+    LOGGER.info(
+        "Restore complete. archive_root=%s restored=%s",
+        archive_root,
+        ",".join(restored) if restored else "none",
+    )
 
 
 def _extract_episode_number(row: dict) -> int | None:
@@ -491,6 +598,7 @@ def run_all(args: argparse.Namespace) -> None:
         args.episodes_csv,
         str(args.manifest),
         str(args.log_file),
+        str(args.config_path),
         args.rss_feed_url,
         args.apple_show_id,
     )
@@ -521,6 +629,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Podcast transcription pipeline entrypoint (manifest/transcribe/speaker/clean/status)."
     )
     parser.add_argument("--all", action="store_true", help="Run all stages sequentially.")
+    parser.add_argument("--config-path", default=str(DEFAULT_CONFIG_PATH), help="Path to YAML config.")
     parser.add_argument("--episodes-csv", default="", help="Input episodes source CSV path.")
     parser.add_argument(
         "--episode-number",
@@ -528,8 +637,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Run specific episode number(s). Repeat flag and/or use comma list, e.g. --episode-number 131 --episode-number 132,133",
     )
-    parser.add_argument("--rss-feed-url", default=DEFAULT_RSS_FEED_URL)
-    parser.add_argument("--apple-show-id", default=DEFAULT_APPLE_SHOW_ID)
+    parser.add_argument("--rss-feed-url", default="")
+    parser.add_argument("--apple-show-id", default="")
     parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST), help="Pipeline manifest path.")
     parser.add_argument("--audio-dir", default=str(DEFAULT_AUDIO_DIR))
     parser.add_argument("--output-dir", default=str(DEFAULT_TRANSCRIPTS_DIR))
@@ -573,6 +682,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tail-lines", type=int, default=30, help="For status command.")
     parser.add_argument("--archive-stages", default="all", help="Comma list like '03,04,05' or 'all'.")
     parser.add_argument("--archive-tag", default="", help="Optional suffix for archive folder name.")
+    parser.add_argument("--restore-archive", default="", help="Archive folder name or full path to restore from.")
+    parser.add_argument("--restore-stages", default="all", help="Comma list like '03,04,05' or 'all' for restore.")
+    parser.add_argument("--overwrite", action="store_true", help="Allow restore to overwrite existing outputs/config/manifest.")
     parser.add_argument("--redo", action="store_true")
 
     sub = parser.add_subparsers(dest="command")
@@ -584,6 +696,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("clean-both", help="Run both cleanup stages in one call.")
     sub.add_parser("render", help="Render website markdown/pages from clean JSON (no LLM calls).")
     sub.add_parser("archive", help="Move selected stage output dirs under transcription/artifacts/old and recreate empty stage dirs.")
+    sub.add_parser("restore", help="Restore selected stage output dirs (and manifest/config snapshot) from an archive.")
     sub.add_parser("status", help="Show manifest summary and latest log tail.")
     sub.add_parser("all", help="Run all stages sequentially.")
     return parser
@@ -593,6 +706,9 @@ def main() -> None:
     _ensure_python_311_plus()
     parser = build_parser()
     args = parser.parse_args()
+    cfg = load_config(args.config_path, required=True)
+    args.rss_feed_url = choose_value(args.rss_feed_url, get_cfg(cfg, "podcast.rss_feed_url", ""))
+    args.apple_show_id = choose_value(args.apple_show_id, get_cfg(cfg, "podcast.apple_show_id", ""))
 
     cmd = args.command
     if args.all:
@@ -606,10 +722,13 @@ def main() -> None:
     LOGGER.info("invocation=%s", shlex.join([sys.executable, *sys.argv]))
 
     if cmd == "manifest":
+        if not args.rss_feed_url:
+            raise ValueError("Missing required podcast.rss_feed_url (set in config or --rss-feed-url).")
         run_manifest(
             args.episodes_csv,
             str(args.manifest),
             str(args.log_file),
+            str(args.config_path),
             args.rss_feed_url,
             args.apple_show_id,
         )
@@ -644,10 +763,15 @@ def main() -> None:
     if cmd == "archive":
         run_archive(args)
         return
+    if cmd == "restore":
+        run_restore(args)
+        return
     if cmd == "render":
         run_render(args)
         return
     if cmd == "all":
+        if not args.rss_feed_url:
+            raise ValueError("Missing required podcast.rss_feed_url (set in config or --rss-feed-url).")
         run_all(args)
         return
 

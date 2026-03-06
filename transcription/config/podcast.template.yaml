@@ -1,0 +1,16 @@
+podcast:
+  name: "My Podcast"
+  rss_feed_url: "https://example.com/podcast/rss"
+  apple_show_id: ""
+  spotify_show_url: ""
+  apple_show_url: ""
+
+site:
+  title: "Episode Transcripts"
+  warning_text: "Unofficial AI-generated transcripts. These may contain mistakes."
+  speakers_note: "Speakers are denoted as color names."
+  generator_name: "PodcastTranscriptor"
+  generator_repo_url: "https://github.com/alik-git/PodcastTranscriptor"
+  owner_name: ""
+  owner_url: ""
+  about_text: ""

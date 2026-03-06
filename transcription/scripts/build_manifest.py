@@ -9,6 +9,9 @@ from datetime import datetime
 import urllib.request
 import xml.etree.ElementTree as ET
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from pdscript.config import DEFAULT_CONFIG_PATH, choose_value, get_cfg, load_config  # noqa: E402
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_CSV = REPO_ROOT / "transcription" / "manifests" / "pipeline_manifest.csv"
@@ -116,6 +119,11 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="Optional Apple Podcasts show ID for per-episode Apple links.",
     )
+    parser.add_argument(
+        "--config-path",
+        default=str(DEFAULT_CONFIG_PATH),
+        help="Path to YAML config file.",
+    )
     return parser.parse_args()
 
 
@@ -153,6 +161,12 @@ def fetch_apple_episode_links(apple_show_id: str) -> dict[str, str]:
 
 def main() -> None:
     args = parse_args()
+    cfg = load_config(args.config_path, required=True)
+    args.rss_feed_url = choose_value(args.rss_feed_url, get_cfg(cfg, "podcast.rss_feed_url", ""))
+    args.apple_show_id = choose_value(args.apple_show_id, get_cfg(cfg, "podcast.apple_show_id", ""))
+    if not args.rss_feed_url:
+        raise ValueError("Missing required podcast.rss_feed_url (set in config or --rss-feed-url).")
+
     setup_logging(args.log_file)
     episodes_csv = resolve_episodes_csv(args.episodes_csv)
     manifest_csv = Path(args.manifest_csv).expanduser().resolve()
@@ -191,7 +205,7 @@ def main() -> None:
         title = (ep.get("title") or "").strip()
         pub_date_iso = (ep.get("pub_date_iso") or "").strip()
         audio_url = (ep.get("audio_url") or "").strip()
-        episode_url = (ep.get("link") or "").strip()
+        episode_url = (ep.get("link") or "").strip() or (rss_links.get(guid) or "").strip()
         source_transcript_url = (ep.get("transcript_url") or "").strip()
         spotify_url = rss_links.get(guid, "")
         apple_url = apple_links.get(guid, "")

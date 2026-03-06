@@ -15,6 +15,9 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Callable
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from pdscript.config import DEFAULT_CONFIG_PATH, choose_value, get_cfg, load_config  # noqa: E402
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TRANSCRIPTION_ROOT = REPO_ROOT / "transcription"
@@ -35,9 +38,14 @@ LOG_DIR = TRANSCRIPTION_ROOT / "logs"
 MANIFEST_PATH = TRANSCRIPTION_ROOT / "manifests" / "pipeline_manifest.csv"
 SITE_EPISODES_DIR = REPO_ROOT / "episodes"
 
-PODCAST_SPOTIFY_SHOW_URL = "https://open.spotify.com/show/0bmymUJs50SVO1WkqfrccB"
-PODCAST_APPLE_SHOW_URL = "https://podcasts.apple.com/us/podcast/the-theory-of-anything/id1503194218"
-PODCAST_TRANSCRIPTOR_URL = "https://github.com/alik-git/PodcastTranscriptor"
+SITE_CONTEXT = {
+    "spotify_show_url": "",
+    "apple_show_url": "",
+    "generator_name": "PodcastTranscriptor",
+    "generator_repo_url": "https://github.com/alik-git/PodcastTranscriptor",
+    "warning_text": "It may contain mistakes.",
+    "speakers_note": "Speakers are denoted as color names.",
+}
 
 MANIFEST_CLEAN_COLUMNS = [
     "clean_python_status",
@@ -329,16 +337,22 @@ def render_named_turns_md(
     spotify_url: str,
     apple_url: str,
 ) -> str:
-    spotify_link = spotify_url or PODCAST_SPOTIFY_SHOW_URL
-    apple_link = apple_url or PODCAST_APPLE_SHOW_URL
+    spotify_link = spotify_url or SITE_CONTEXT["spotify_show_url"]
+    apple_link = apple_url or SITE_CONTEXT["apple_show_url"]
+    gen_name = SITE_CONTEXT["generator_name"]
+    gen_repo_url = SITE_CONTEXT["generator_repo_url"]
+    warning_text = SITE_CONTEXT["warning_text"]
+    speakers_note = SITE_CONTEXT["speakers_note"]
+    warning_sentence = warning_text.strip().rstrip(".")
     out = [
         f"# {title}",
         "",
-        f"- Links to this episode: [Spotify]({spotify_link}) / [Apple Podcasts]({apple_link})",
-        f"- This transcript was generated with AI using [PodcastTranscriptor]({PODCAST_TRANSCRIPTOR_URL}).",
-        "- **It may contain mistakes.** Please check against the actual podcast.",
-        "- Speakers are denoted as color names.",
+        f"- This transcript was generated with AI using [{gen_name}]({gen_repo_url}).",
+        f"- **{warning_text}** Please check against the actual podcast.",
+        f"- {speakers_note}",
     ]
+    if spotify_link or apple_link:
+        out.insert(2, f"- Links to this episode: [Spotify]({spotify_link}) / [Apple Podcasts]({apple_link})")
     out.extend(
         [
             "",
@@ -361,12 +375,13 @@ def render_named_turns_md(
         [
             "---",
             "",
-            f"*Links to this episode:* [Spotify]({spotify_link}) / [Apple Podcasts]({apple_link})",
-            "",
-            f"*Generated with AI using [PodcastTranscriptor]({PODCAST_TRANSCRIPTOR_URL}). May contain mistakes; please verify against the actual podcast.*",
+            f"*Generated with AI using [{gen_name}]({gen_repo_url}). {warning_sentence}; please verify against the actual podcast.*",
             "",
         ]
     )
+    if spotify_link or apple_link:
+        out.insert(-2, f"*Links to this episode:* [Spotify]({spotify_link}) / [Apple Podcasts]({apple_link})")
+        out.insert(-2, "")
     return "\n".join(out).rstrip() + "\n"
 
 
@@ -375,10 +390,37 @@ def infer_episode_links(title: str, manifest_row: dict | None) -> tuple[str, str
     spotify = (row.get("spotify_url") or "").strip()
     apple = (row.get("apple_url") or "").strip()
     if not spotify:
-        spotify = PODCAST_SPOTIFY_SHOW_URL
+        spotify = SITE_CONTEXT["spotify_show_url"]
     if not apple:
-        apple = PODCAST_APPLE_SHOW_URL
+        apple = SITE_CONTEXT["apple_show_url"]
     return spotify, apple
+
+
+def configure_site_context(cfg: dict) -> None:
+    SITE_CONTEXT["spotify_show_url"] = choose_value(
+        get_cfg(cfg, "podcast.spotify_show_url", ""),
+        SITE_CONTEXT["spotify_show_url"],
+    )
+    SITE_CONTEXT["apple_show_url"] = choose_value(
+        get_cfg(cfg, "podcast.apple_show_url", ""),
+        SITE_CONTEXT["apple_show_url"],
+    )
+    SITE_CONTEXT["generator_name"] = choose_value(
+        get_cfg(cfg, "site.generator_name", ""),
+        SITE_CONTEXT["generator_name"],
+    )
+    SITE_CONTEXT["generator_repo_url"] = choose_value(
+        get_cfg(cfg, "site.generator_repo_url", ""),
+        SITE_CONTEXT["generator_repo_url"],
+    )
+    SITE_CONTEXT["warning_text"] = choose_value(
+        get_cfg(cfg, "site.warning_text", ""),
+        SITE_CONTEXT["warning_text"],
+    )
+    SITE_CONTEXT["speakers_note"] = choose_value(
+        get_cfg(cfg, "site.speakers_note", ""),
+        SITE_CONTEXT["speakers_note"],
+    )
 
 
 def write_site_episode_page(base: str, title: str, body_md: str) -> None:
@@ -1224,6 +1266,7 @@ def process_episode(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--config-path", default=str(DEFAULT_CONFIG_PATH))
     parser.add_argument("--segments-dir", default=str(DEBUG_DIR))
     parser.add_argument("--mode", choices=["python", "llm", "both"], default="python")
     parser.add_argument("--max-episodes", type=int, default=0)
@@ -1242,6 +1285,8 @@ def main() -> None:
     parser.add_argument("--log-dir", default=str(LOG_DIR))
     parser.add_argument("--manifest-path", default=str(MANIFEST_PATH))
     args = parser.parse_args()
+    cfg = load_config(args.config_path, required=True)
+    configure_site_context(cfg)
 
     ensure_dirs()
     run_stamp = local_run_stamp()

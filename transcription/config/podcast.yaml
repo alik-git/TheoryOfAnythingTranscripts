@@ -1,0 +1,16 @@
+podcast:
+  name: "Theory of Anything"
+  rss_feed_url: "https://anchor.fm/s/14b6fc10/podcast/rss"
+  apple_show_id: "1503194218"
+  spotify_show_url: "https://open.spotify.com/show/0bmymUJs50SVO1WkqfrccB"
+  apple_show_url: "https://podcasts.apple.com/us/podcast/the-theory-of-anything/id1503194218"
+
+site:
+  title: "Episode Transcripts for the Theory of Anything Podcast"
+  warning_text: "Unofficial AI-generated transcripts. These may contain mistakes."
+  speakers_note: "Speakers are denoted as color names."
+  generator_name: "PodcastTranscriptor"
+  generator_repo_url: "https://github.com/alik-git/PodcastTranscriptor"
+  owner_name: "Ali"
+  owner_url: "https://alihkw.com"
+  about_text: "This was a vibecoding project for Ali for fun."

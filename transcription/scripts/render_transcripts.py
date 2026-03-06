@@ -8,16 +8,17 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from clean_dialogue_batch import (  # noqa: E402
     ARTIFACTS_ROOT,
     MANIFEST_PATH,
-    PODCAST_APPLE_SHOW_URL,
-    PODCAST_SPOTIFY_SHOW_URL,
+    configure_site_context,
     infer_episode_links,
     render_named_turns_md,
     slug_base_to_title,
     write_site_episode_page,
 )
+from pdscript.config import DEFAULT_CONFIG_PATH, load_config
 
 CLEAN_JSON_DIR = ARTIFACTS_ROOT / "04_clean_llm" / "json"
 WEB_MD_DIR = ARTIFACTS_ROOT / "05_webformat" / "md"
@@ -111,6 +112,7 @@ def ensure_clean_llm_columns(fieldnames: list[str]) -> list[str]:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
+    p.add_argument("--config-path", default=str(DEFAULT_CONFIG_PATH))
     p.add_argument("--manifest-path", default=str(MANIFEST_PATH))
     p.add_argument("--clean-json-dir", default=str(CLEAN_JSON_DIR))
     p.add_argument("--web-md-dir", default=str(WEB_MD_DIR))
@@ -123,6 +125,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    cfg = load_config(args.config_path, required=True)
+    configure_site_context(cfg)
     setup_logging(args.log_file)
     LOGGER.info("invocation=%s", shlex.join([sys.executable, *sys.argv]))
 
@@ -182,10 +186,6 @@ def main() -> None:
             turns = payload.get("turns", [])
             title = (row or {}).get("title") or slug_base_to_title(base)
             spotify, apple = infer_episode_links(title, row)
-            if not spotify:
-                spotify = PODCAST_SPOTIFY_SHOW_URL
-            if not apple:
-                apple = PODCAST_APPLE_SHOW_URL
 
             md = render_named_turns_md(title=title, turns=turns, spotify_url=spotify, apple_url=apple)
             md_out.write_text(md, encoding="utf-8")

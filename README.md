@@ -258,7 +258,6 @@ Outputs:
 - `transcription/artifacts/04_clean_llm/raw/<base>.llm_raw.json`
 - `transcription/artifacts/04_clean_llm/meta/<base>.clean_meta.json`
 - Live partials while running:
-  - `transcription/artifacts/05_webformat/md/*.clean.partial.md`
   - `transcription/artifacts/04_clean_llm/json/*.clean.partial.json`
   - `transcription/artifacts/04_clean_llm/raw/*.llm_raw.partial.json`
 
@@ -281,7 +280,8 @@ Outputs:
 - `episodes/<slug>.md` (Jekyll page with permalink `/episodes/<episode_number>/`)
 
 Purpose:
-- Decouples website formatting from LLM inference so page layout/theme changes do not require rerunning Stage 5.
+- Stage 5 only produces canonical LLM outputs; Stage 6 owns all final markdown/page rendering.
+- This decoupling means website format/theme changes do not require rerunning Stage 5.
 
 ## Monitoring
 

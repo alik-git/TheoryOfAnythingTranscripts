@@ -5,48 +5,27 @@ import json
 import logging
 import shlex
 import sys
-from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from clean_dialogue_batch import (  # noqa: E402
-    ARTIFACTS_ROOT,
-    MANIFEST_PATH,
+from pdscript.common import now_utc, setup_script_logging, write_manifest_rows  # noqa: E402
+from pdscript.config import DEFAULT_CONFIG_PATH, choose_value, get_cfg, load_config
+from render_utils import (  # noqa: E402
     configure_site_context,
     infer_episode_links,
     render_named_turns_md,
     slug_base_to_title,
     write_site_episode_page,
 )
-from pdscript.config import DEFAULT_CONFIG_PATH, load_config
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+TRANSCRIPTION_ROOT = REPO_ROOT / "transcription"
+ARTIFACTS_ROOT = TRANSCRIPTION_ROOT / "artifacts"
+MANIFEST_PATH = TRANSCRIPTION_ROOT / "manifests" / "pipeline_manifest.csv"
 CLEAN_JSON_DIR = ARTIFACTS_ROOT / "04_clean_llm" / "json"
 WEB_MD_DIR = ARTIFACTS_ROOT / "05_webformat" / "md"
-EPISODES_DIR = Path(__file__).resolve().parents[2] / "episodes"
+EPISODES_DIR = REPO_ROOT / "episodes"
 LOGGER = logging.getLogger("render_transcripts")
-
-
-def now_utc() -> str:
-    return datetime.utcnow().isoformat(timespec="seconds") + "Z"
-
-
-def setup_logging(log_file: str = "") -> None:
-    LOGGER.setLevel(logging.INFO)
-    LOGGER.handlers.clear()
-    formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
-
-    sh = logging.StreamHandler(sys.stdout)
-    sh.setLevel(logging.INFO)
-    sh.setFormatter(formatter)
-    LOGGER.addHandler(sh)
-
-    if log_file:
-        lp = Path(log_file).expanduser().resolve()
-        lp.parent.mkdir(parents=True, exist_ok=True)
-        fh = logging.FileHandler(lp, encoding="utf-8")
-        fh.setLevel(logging.INFO)
-        fh.setFormatter(formatter)
-        LOGGER.addHandler(fh)
 
 
 def base_from_clean_json(path: Path) -> str:
@@ -90,16 +69,7 @@ def load_manifest(path: Path) -> tuple[list[str], list[dict], dict[str, dict], d
 def write_manifest(path: Path, fieldnames: list[str], rows: list[dict]) -> None:
     if not fieldnames:
         return
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=fieldnames)
-        w.writeheader()
-        for r in rows:
-            out = dict(r)
-            for c in fieldnames:
-                out.setdefault(c, "")
-            w.writerow(out)
-    tmp.replace(path)
+    write_manifest_rows(path, fieldnames, rows)
 
 
 def ensure_clean_llm_columns(fieldnames: list[str]) -> list[str]:
@@ -126,8 +96,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     cfg = load_config(args.config_path, required=True)
-    configure_site_context(cfg)
-    setup_logging(args.log_file)
+    configure_site_context(cfg, choose_value, get_cfg)
+    setup_script_logging(LOGGER, args.log_file)
     LOGGER.info("invocation=%s", shlex.join([sys.executable, *sys.argv]))
 
     manifest_path = Path(args.manifest_path)
@@ -185,11 +155,11 @@ def main() -> None:
             payload = json.loads(jf.read_text(encoding="utf-8"))
             turns = payload.get("turns", [])
             title = (row or {}).get("title") or slug_base_to_title(base)
-            spotify, apple = infer_episode_links(title, row)
+            spotify, apple = infer_episode_links(row)
 
             md = render_named_turns_md(title=title, turns=turns, spotify_url=spotify, apple_url=apple)
             md_out.write_text(md, encoding="utf-8")
-            write_site_episode_page(base, title, md)
+            write_site_episode_page(base, title, md, episodes_dir=episodes_dir)
             LOGGER.info("[%s/%s] rendered %s", i, total, base)
 
             if row is not None:

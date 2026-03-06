@@ -233,16 +233,12 @@ def run_clean(args: argparse.Namespace, mode: str) -> None:
     cmd = [
         sys.executable,
         str(CLEAN_SCRIPT),
-        "--config-path",
-        str(args.config_path),
         "--mode",
         mode,
         "--segments-dir",
         str(args.segments_dir),
         "--max-episodes",
         str(args.max_episodes),
-        "--max-gap-sec",
-        str(args.max_gap_sec),
         "--manifest-path",
         str(args.manifest),
         "--log-dir",
@@ -258,8 +254,6 @@ def run_clean(args: argparse.Namespace, mode: str) -> None:
                 str(args.llm_model),
                 "--llm-temperature",
                 str(args.llm_temperature),
-                "--llm-max-chars-per-chunk",
-                str(args.llm_max_chars_per_chunk),
                 "--llm-max-words-per-chunk",
                 str(args.llm_max_words_per_chunk),
                 "--llm-overlap-words",
@@ -754,10 +748,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--telemetry-interval-sec", type=int, default=30)
     parser.add_argument("--gpu-init-retries", type=int, default=3)
     parser.add_argument("--gpu-init-retry-delay-sec", type=float, default=5.0)
-    parser.add_argument("--max-gap-sec", type=float, default=1.2)
     parser.add_argument("--llm-model", default="gpt-5-nano")
     parser.add_argument("--llm-temperature", type=float, default=0.0)
-    parser.add_argument("--llm-max-chars-per-chunk", type=int, default=12000)
     parser.add_argument("--llm-max-words-per-chunk", type=int, default=500)
     parser.add_argument("--llm-overlap-words", type=int, default=100)
     parser.add_argument("--llm-chunk-sentence-overrun-words", type=int, default=120)

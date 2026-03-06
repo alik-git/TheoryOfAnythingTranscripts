@@ -2,6 +2,7 @@
 import argparse
 import csv
 import json
+import logging
 import os
 import re
 import shlex
@@ -16,7 +17,8 @@ from pathlib import Path
 from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from pdscript.config import DEFAULT_CONFIG_PATH, choose_value, get_cfg, load_config  # noqa: E402
+from pdscript.common import now_utc, setup_script_logging, write_manifest_rows  # noqa: E402
+from render_utils import slug_base_to_title  # noqa: E402
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -31,21 +33,10 @@ LLM_ROOT = ARTIFACTS_ROOT / "04_clean_llm"
 META_DIR = LLM_ROOT / "meta"
 RAW_DIR = LLM_ROOT / "raw"
 CLEAN_JSON_DIR = LLM_ROOT / "json"
-WEB_ROOT = ARTIFACTS_ROOT / "05_webformat"
-WEB_MD_DIR = WEB_ROOT / "md"
 ARCHIVE_DIR = ARTIFACTS_ROOT / "old" / "clean_dialogue_archive"
 LOG_DIR = TRANSCRIPTION_ROOT / "logs"
 MANIFEST_PATH = TRANSCRIPTION_ROOT / "manifests" / "pipeline_manifest.csv"
-SITE_EPISODES_DIR = REPO_ROOT / "episodes"
-
-SITE_CONTEXT = {
-    "spotify_show_url": "",
-    "apple_show_url": "",
-    "generator_name": "PodcastTranscriptor",
-    "generator_repo_url": "https://github.com/alik-git/PodcastTranscriptor",
-    "warning_text": "It may contain mistakes.",
-    "speakers_note": "Speakers are denoted as color names.",
-}
+LOGGER = logging.getLogger("clean_dialogue_batch")
 
 MANIFEST_CLEAN_COLUMNS = [
     "clean_python_status",
@@ -81,48 +72,6 @@ COLOR_NAMES = [
     "Navy",
 ]
 
-SPEAKER_COLOR_HEX = {
-    "blue": "#2563eb",
-    "red": "#dc2626",
-    "green": "#16a34a",
-    "orange": "#ea580c",
-    "purple": "#9333ea",
-    "teal": "#0f766e",
-    "brown": "#92400e",
-    "pink": "#db2777",
-    "gray": "#4b5563",
-    "cyan": "#0891b2",
-    "gold": "#ca8a04",
-    "indigo": "#4f46e5",
-    "magenta": "#c026d3",
-    "olive": "#65a30d",
-    "navy": "#1e3a8a",
-    "unknown": "#6b7280",
-}
-
-CONNECTOR_STARTS = {
-    "and",
-    "but",
-    "or",
-    "so",
-    "because",
-    "that",
-    "which",
-    "who",
-    "what",
-    "when",
-    "where",
-    "if",
-    "then",
-    "also",
-    "well",
-    "you",
-    "i",
-    "we",
-    "they",
-    "he",
-    "she",
-}
 
 SYSTEM_PROMPT_LABEL_CORRECTION = """
 You are a speaker-label correction assistant for AI generated transcripts.
@@ -168,32 +117,13 @@ Return JSON only in this format: {"corrections": [{"line": 12, "speaker": "Red"}
 Only include lines that should change. If none: {"corrections": []}
 """.strip()
 
-_LOG_FP = None
-
-
-def now_utc() -> str:
-    return datetime.utcnow().isoformat(timespec="seconds") + "Z"
-
-
 def log(message: str) -> None:
-    ts = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
-    line = f"[{ts}] {message}"
-    print(line, flush=True)
-    if _LOG_FP is not None:
-        _LOG_FP.write(line + "\n")
-        _LOG_FP.flush()
+    LOGGER.info("%s", message)
 
 
 def local_run_stamp() -> str:
     # Human-readable and lexicographically sortable (local timezone).
     return datetime.now().astimezone().strftime("%Y-%m-%d_%H-%M-%S_%Z")
-
-
-def slug_base_to_title(base_name: str) -> str:
-    parts = base_name.split("__")
-    if len(parts) >= 2:
-        return parts[1].replace("-", " ").strip().title()
-    return base_name
 
 
 def normalize_text(text: str) -> str:
@@ -212,31 +142,9 @@ def sec_to_hms(sec: float) -> str:
     return f"{hh:02d}:{mm:02d}:{ss:02d}"
 
 
-def parse_hms_to_sec(value) -> int:
-    if isinstance(value, (int, float)):
-        return max(0, int(round(float(value))))
-    t = str(value or "").strip()
-    if not t:
-        raise ValueError("empty timestamp")
-    if re.fullmatch(r"\d+", t):
-        return max(0, int(t))
-    m = re.fullmatch(r"(\d{1,2}):(\d{2}):(\d{2})", t)
-    if not m:
-        raise ValueError(f"invalid timestamp: {value}")
-    hh, mm, ss = map(int, m.groups())
-    return max(0, hh * 3600 + mm * 60 + ss)
-
-
 def is_strong_sentence_end(text: str) -> bool:
     t = text.rstrip()
     return bool(t) and t[-1] in ".?!"
-
-
-def starts_with_connector(text: str) -> bool:
-    m = re.match(r"[A-Za-z']+", text.strip().lower())
-    if not m:
-        return False
-    return m.group(0) in CONNECTOR_STARTS
 
 
 def map_speaker_names(rows: list[dict]) -> dict[str, str]:
@@ -253,40 +161,6 @@ def map_speaker_names(rows: list[dict]) -> dict[str, str]:
         else:
             mapping[spk] = f"Color{i + 1}"
     return mapping
-
-
-def should_merge(prev: dict, cur: dict, max_gap_sec: float) -> bool:
-    if prev["speaker"] != cur["speaker"]:
-        return False
-    gap = max(0.0, cur["start"] - prev["end"])
-    if gap > max_gap_sec:
-        return False
-
-    prev_text = prev["text"]
-    cur_text = cur["text"]
-    if not is_strong_sentence_end(prev_text):
-        return True
-    if starts_with_connector(cur_text):
-        return True
-    if len(cur_text.split()) <= 4:
-        return True
-    return False
-
-
-def merge_rows(rows: list[dict], max_gap_sec: float) -> list[dict]:
-    merged: list[dict] = []
-    for r in rows:
-        if not merged:
-            merged.append(dict(r))
-            continue
-        prev = merged[-1]
-        if should_merge(prev, r, max_gap_sec=max_gap_sec):
-            prev["text"] = normalize_text(f"{prev['text']} {r['text']}")
-            prev["end"] = max(prev["end"], r["end"])
-            prev["speaker_conf"] = round((prev["speaker_conf"] + r["speaker_conf"]) / 2.0, 3)
-        else:
-            merged.append(dict(r))
-    return merged
 
 
 def read_segments_csv(path: Path) -> list[dict]:
@@ -329,140 +203,6 @@ def render_clean_md(title: str, turns: list[dict], speaker_map: dict[str, str], 
         out.append(f"[{sec_to_hms(start_sec)}] {speaker_name}: {text}")
         out.append("")
     return "\n".join(out).rstrip() + "\n"
-
-
-def render_named_turns_md(
-    title: str,
-    turns: list[dict],
-    spotify_url: str,
-    apple_url: str,
-) -> str:
-    spotify_link = spotify_url or SITE_CONTEXT["spotify_show_url"]
-    apple_link = apple_url or SITE_CONTEXT["apple_show_url"]
-    gen_name = SITE_CONTEXT["generator_name"]
-    gen_repo_url = SITE_CONTEXT["generator_repo_url"]
-    warning_text = SITE_CONTEXT["warning_text"]
-    speakers_note = SITE_CONTEXT["speakers_note"]
-    warning_sentence = warning_text.strip().rstrip(".")
-    out = [
-        f"# {title}",
-        "",
-        f"- This transcript was generated with AI using [{gen_name}]({gen_repo_url}).",
-        f"- **{warning_text}** Please check against the actual podcast.",
-        f"- {speakers_note}",
-    ]
-    if spotify_link or apple_link:
-        out.insert(2, f"- Links to this episode: [Spotify]({spotify_link}) / [Apple Podcasts]({apple_link})")
-    out.extend(
-        [
-            "",
-            "## Transcript",
-            "",
-        ]
-    )
-    for t in turns:
-        speaker_name = t["speaker_name"]
-        text = normalize_text(t["text"])
-        start_sec = int(round(float(t.get("timestamp_sec", 0) or 0)))
-        if not text:
-            continue
-        color = SPEAKER_COLOR_HEX.get(str(speaker_name).strip().lower(), "#374151")
-        ts = f"<em><strong>[{sec_to_hms(start_sec)}]</strong></em>"
-        spk = f"<strong><span style=\"color:{color}\">{speaker_name}:</span></strong>"
-        out.append(f"{ts}&nbsp;&nbsp;{spk} {text}")
-        out.append("")
-    out.extend(
-        [
-            "---",
-            "",
-            f"*Generated with AI using [{gen_name}]({gen_repo_url}). {warning_sentence}; please verify against the actual podcast.*",
-            "",
-        ]
-    )
-    if spotify_link or apple_link:
-        out.insert(-2, f"*Links to this episode:* [Spotify]({spotify_link}) / [Apple Podcasts]({apple_link})")
-        out.insert(-2, "")
-    return "\n".join(out).rstrip() + "\n"
-
-
-def infer_episode_links(title: str, manifest_row: dict | None) -> tuple[str, str]:
-    row = manifest_row or {}
-    spotify = (row.get("spotify_url") or "").strip()
-    apple = (row.get("apple_url") or "").strip()
-    if not spotify:
-        spotify = SITE_CONTEXT["spotify_show_url"]
-    if not apple:
-        apple = SITE_CONTEXT["apple_show_url"]
-    return spotify, apple
-
-
-def configure_site_context(cfg: dict) -> None:
-    SITE_CONTEXT["spotify_show_url"] = choose_value(
-        get_cfg(cfg, "podcast.spotify_show_url", ""),
-        SITE_CONTEXT["spotify_show_url"],
-    )
-    SITE_CONTEXT["apple_show_url"] = choose_value(
-        get_cfg(cfg, "podcast.apple_show_url", ""),
-        SITE_CONTEXT["apple_show_url"],
-    )
-    SITE_CONTEXT["generator_name"] = choose_value(
-        get_cfg(cfg, "site.generator_name", ""),
-        SITE_CONTEXT["generator_name"],
-    )
-    SITE_CONTEXT["generator_repo_url"] = choose_value(
-        get_cfg(cfg, "site.generator_repo_url", ""),
-        SITE_CONTEXT["generator_repo_url"],
-    )
-    SITE_CONTEXT["warning_text"] = choose_value(
-        get_cfg(cfg, "site.warning_text", ""),
-        SITE_CONTEXT["warning_text"],
-    )
-    SITE_CONTEXT["speakers_note"] = choose_value(
-        get_cfg(cfg, "site.speakers_note", ""),
-        SITE_CONTEXT["speakers_note"],
-    )
-
-
-def write_site_episode_page(base: str, title: str, body_md: str) -> None:
-    SITE_EPISODES_DIR.mkdir(parents=True, exist_ok=True)
-    parts = base.split("__")
-    date_part = parts[0] if parts else "unknown-date"
-    slug_part = parts[1] if len(parts) >= 2 else base
-    out_name = f"{date_part}-{slug_part}.md"
-    out_path = SITE_EPISODES_DIR / out_name
-
-    m = re.search(r"Episode\s+(\d+)", title, flags=re.IGNORECASE)
-    nav_order = int(m.group(1)) if m else 9999
-    safe_title = title.replace('"', '\\"')
-    permalink_line = f"permalink: /episodes/{nav_order}/\n" if m else ""
-
-    front_matter = (
-        "---\n"
-        "layout: default\n"
-        f"title: \"{safe_title}\"\n"
-        "parent: Episodes\n"
-        f"nav_order: {nav_order}\n"
-        f"{permalink_line}"
-        "---\n\n"
-    )
-    out_path.write_text(front_matter + body_md, encoding="utf-8")
-
-
-def chunk_turns_for_llm(turns: list[dict], max_chars: int) -> list[list[dict]]:
-    chunks: list[list[dict]] = []
-    cur: list[dict] = []
-    cur_chars = 0
-    for t in turns:
-        line = f"{t['speaker_name']}: {t['text']}\n"
-        if cur and cur_chars + len(line) > max_chars:
-            chunks.append(cur)
-            cur = []
-            cur_chars = 0
-        cur.append(t)
-        cur_chars += len(line)
-    if cur:
-        chunks.append(cur)
-    return chunks
 
 
 def merge_same_speaker_turns_under_cap(turns: list[dict], max_words: int = 300) -> tuple[list[dict], dict]:
@@ -510,7 +250,6 @@ def merge_same_speaker_turns_under_cap(turns: list[dict], max_words: int = 300) 
 class LLMConfig:
     model: str
     temperature: float
-    max_chars_per_chunk: int
     max_words_per_chunk: int
     overlap_words: int
     chunk_sentence_overrun_words: int
@@ -727,15 +466,6 @@ def summarize_label_corrections(chunk_records: list[dict]) -> dict:
     }
 
 
-def label_correction_notes(summary: dict) -> list[str]:
-    return [
-        "Label correction summary: "
-        f"parse_failures={summary.get('parse_failures', 0)}, "
-        f"corrections_requested={summary.get('corrections_requested', 0)}, "
-        f"corrections_applied={summary.get('corrections_applied', 0)}"
-    ]
-
-
 def extract_json_object(text: str) -> str:
     t = (text or "").strip()
     if t.startswith("```"):
@@ -746,40 +476,6 @@ def extract_json_object(text: str) -> str:
     if start == -1 or end == -1 or end <= start:
         raise ValueError("LLM output did not contain a JSON object.")
     return t[start : end + 1]
-
-
-def parse_llm_turns_json(raw_text: str, allowed_speakers: set[str], fallback_chunk: list[dict]) -> list[dict]:
-    try:
-        obj = json.loads(extract_json_object(raw_text))
-        turns = obj.get("turns", [])
-        if not isinstance(turns, list):
-            raise ValueError("turns is not a list")
-        parsed = []
-        for t in turns:
-            speaker = str(t.get("speaker", "")).strip()
-            text = normalize_text(str(t.get("text", "")))
-            ts_val = t.get("timestamp", t.get("timestamp_sec", ""))
-            if not text:
-                continue
-            if speaker not in allowed_speakers:
-                speaker = "Unknown"
-            try:
-                ts_sec = parse_hms_to_sec(ts_val)
-            except Exception:
-                ts_sec = int(round(float(fallback_chunk[0].get("timestamp_sec", 0) or 0)))
-            parsed.append({"speaker_name": speaker, "timestamp_sec": ts_sec, "text": text})
-        if not parsed:
-            raise ValueError("No parsed turns from LLM output.")
-        return parsed
-    except Exception:
-        return [
-            {
-                "speaker_name": t["speaker_name"],
-                "timestamp_sec": int(round(float(t.get("timestamp_sec", 0) or 0))),
-                "text": t["text"],
-            }
-            for t in fallback_chunk
-        ]
 
 
 def llm_cleanup_turns(
@@ -927,7 +623,6 @@ def llm_cleanup_turns(
 def ensure_dirs() -> None:
     PYTHON_OUT_DIR.mkdir(parents=True, exist_ok=True)
     PYTHON_JSON_DIR.mkdir(parents=True, exist_ok=True)
-    WEB_MD_DIR.mkdir(parents=True, exist_ok=True)
     META_DIR.mkdir(parents=True, exist_ok=True)
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     CLEAN_JSON_DIR.mkdir(parents=True, exist_ok=True)
@@ -983,16 +678,7 @@ def load_manifest(path: Path) -> tuple[list[str], list[dict], dict[str, dict], d
 def write_manifest(path: Path, fieldnames: list[str], rows: list[dict]) -> None:
     if not fieldnames:
         return
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        for r in rows:
-            out = dict(r)
-            for c in fieldnames:
-                out.setdefault(c, "")
-            writer.writerow(out)
-    tmp.replace(path)
+    write_manifest_rows(path, fieldnames, rows)
 
 
 def _state_for_manifest(state: str) -> str:
@@ -1011,7 +697,6 @@ def update_manifest_row(
     llm_state: str,
     python_out: Path,
     python_json_out: Path,
-    llm_out: Path,
     llm_json_out: Path,
     llm_raw_out: Path,
     meta_out: Path,
@@ -1029,7 +714,6 @@ def update_manifest_row(
         row["clean_llm_status"] = _state_for_manifest(llm_state)
         row["clean_llm_updated_at"] = ts
         row["clean_llm_model"] = llm_model
-        row["clean_llm_md"] = str(llm_out) if llm_out.exists() else row.get("clean_llm_md", "")
         row["clean_llm_json"] = str(llm_json_out) if llm_json_out.exists() else row.get("clean_llm_json", "")
         row["clean_llm_raw_json"] = str(llm_raw_out) if llm_raw_out.exists() else row.get("clean_llm_raw_json", "")
         row["clean_llm_meta"] = str(meta_out) if meta_out.exists() else row.get("clean_llm_meta", "")
@@ -1046,7 +730,6 @@ def base_from_segments_path(path: Path) -> str:
 def process_episode(
     seg_csv: Path,
     mode: str,
-    max_gap_sec: float,
     llm_cfg: LLMConfig,
     redo: bool,
     manifest_row: dict | None = None,
@@ -1055,8 +738,6 @@ def process_episode(
     title = slug_base_to_title(base)
     python_out = PYTHON_OUT_DIR / f"{base}.clean.md"
     python_json_out = PYTHON_JSON_DIR / f"{base}.clean.json"
-    web_md_out = WEB_MD_DIR / f"{base}.clean.md"
-    web_partial_out = WEB_MD_DIR / f"{base}.clean.partial.md"
     llm_raw_out = RAW_DIR / f"{base}.llm_raw.json"
     llm_raw_partial_out = RAW_DIR / f"{base}.llm_raw.partial.json"
     llm_json_out = CLEAN_JSON_DIR / f"{base}.clean.json"
@@ -1102,15 +783,12 @@ def process_episode(
         python_state = "written"
 
     if mode in {"llm", "both"}:
-        if web_md_out.exists() and llm_json_out.exists() and not redo:
+        if llm_json_out.exists() and not redo:
             llm_state = "skipped"
         else:
-            archive_existing(web_md_out, "webformat_md")
             archive_existing(llm_raw_out, "clean_llm_raw")
             archive_existing(llm_json_out, "clean_llm_json")
             archive_existing(meta_out, "clean_meta")
-            if web_partial_out.exists():
-                web_partial_out.unlink()
             if llm_raw_partial_out.exists():
                 llm_raw_partial_out.unlink()
             if llm_json_partial_out.exists():
@@ -1127,7 +805,6 @@ def process_episode(
                 }
                 for t in rows
             ]
-            spotify_url, apple_url = infer_episode_links(title, manifest_row)
             raw_records_partial: list[dict] = []
 
             def write_partial(
@@ -1144,13 +821,6 @@ def process_episode(
                     partial_turns,
                     max_words=300,
                 )
-                partial_text = render_named_turns_md(
-                    title,
-                    partial_rebalanced,
-                    spotify_url=spotify_url,
-                    apple_url=apple_url,
-                )
-                web_partial_out.write_text(partial_text, encoding="utf-8")
                 llm_json_partial_out.write_text(
                     json.dumps(
                         {
@@ -1189,16 +859,6 @@ def process_episode(
             cleaned_turns, in_tok, out_tok, raw_chunks = llm_cleanup_turns(llm_turns, cfg=llm_cfg, on_chunk_done=write_partial)
             cleaned_turns, merge_cap_stats = merge_same_speaker_turns_under_cap(cleaned_turns, max_words=300)
             final_corr_summary = summarize_label_corrections(raw_chunks)
-            llm_text = render_named_turns_md(
-                title,
-                cleaned_turns,
-                spotify_url=spotify_url,
-                apple_url=apple_url,
-            )
-            web_md_out.write_text(llm_text, encoding="utf-8")
-            write_site_episode_page(base, title, llm_text)
-            if web_partial_out.exists():
-                web_partial_out.unlink()
             llm_json_out.write_text(
                 json.dumps(
                     {
@@ -1266,15 +926,12 @@ def process_episode(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config-path", default=str(DEFAULT_CONFIG_PATH))
     parser.add_argument("--segments-dir", default=str(DEBUG_DIR))
     parser.add_argument("--mode", choices=["python", "llm", "both"], default="python")
     parser.add_argument("--max-episodes", type=int, default=0)
-    parser.add_argument("--max-gap-sec", type=float, default=1.2)
     parser.add_argument("--redo", action="store_true")
     parser.add_argument("--llm-model", default="gpt-5-nano")
     parser.add_argument("--llm-temperature", type=float, default=0.0)
-    parser.add_argument("--llm-max-chars-per-chunk", type=int, default=12000)
     parser.add_argument("--llm-max-words-per-chunk", type=int, default=500)
     parser.add_argument("--llm-overlap-words", type=int, default=100)
     parser.add_argument("--llm-chunk-sentence-overrun-words", type=int, default=120)
@@ -1285,8 +942,6 @@ def main() -> None:
     parser.add_argument("--log-dir", default=str(LOG_DIR))
     parser.add_argument("--manifest-path", default=str(MANIFEST_PATH))
     args = parser.parse_args()
-    cfg = load_config(args.config_path, required=True)
-    configure_site_context(cfg)
 
     ensure_dirs()
     run_stamp = local_run_stamp()
@@ -1294,9 +949,7 @@ def main() -> None:
     log_dir = Path(args.log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
     log_file = Path(args.log_file) if args.log_file else log_dir / f"clean_dialogue_{mode_slug}_{run_stamp}.log"
-
-    global _LOG_FP
-    _LOG_FP = log_file.open("a", encoding="utf-8")
+    setup_script_logging(LOGGER, str(log_file))
     log(f"Run started. log_file={log_file}")
     log(f"invocation={shlex.join([sys.executable, *sys.argv])}")
     log(f"Args: {vars(args)}")
@@ -1342,7 +995,6 @@ def main() -> None:
     llm_cfg = LLMConfig(
         model=args.llm_model,
         temperature=args.llm_temperature,
-        max_chars_per_chunk=max(2000, args.llm_max_chars_per_chunk),
         max_words_per_chunk=max(80, args.llm_max_words_per_chunk),
         overlap_words=max(0, args.llm_overlap_words),
         chunk_sentence_overrun_words=max(0, args.llm_chunk_sentence_overrun_words),
@@ -1362,13 +1014,11 @@ def main() -> None:
         llm_json_out = CLEAN_JSON_DIR / f"{base}.clean.json"
         llm_raw_out = RAW_DIR / f"{base}.llm_raw.json"
         meta_out = META_DIR / f"{base}.clean_meta.json"
-        web_md_out = WEB_MD_DIR / f"{base}.clean.md"
         log(f"[{i}/{total}] start base={base}")
         try:
             py_state, llm_state = process_episode(
                 seg_csv=seg_csv,
                 mode=args.mode,
-                max_gap_sec=max(0.1, args.max_gap_sec),
                 llm_cfg=llm_cfg,
                 redo=args.redo,
                 manifest_row=manifest_row,
@@ -1382,7 +1032,6 @@ def main() -> None:
                     llm_state=llm_state,
                     python_out=python_out,
                     python_json_out=python_json_out,
-                    llm_out=web_md_out,
                     llm_json_out=llm_json_out,
                     llm_raw_out=llm_raw_out,
                     meta_out=meta_out,
@@ -1409,7 +1058,6 @@ def main() -> None:
                     llm_state=llm_state_err,
                     python_out=python_out,
                     python_json_out=python_json_out,
-                    llm_out=web_md_out,
                     llm_json_out=llm_json_out,
                     llm_raw_out=llm_raw_out,
                     meta_out=meta_out,
@@ -1421,8 +1069,6 @@ def main() -> None:
         processed += 1
 
     log(f"Finished clean batch. Episodes attempted: {processed}")
-    if _LOG_FP is not None:
-        _LOG_FP.close()
 
 
 if __name__ == "__main__":

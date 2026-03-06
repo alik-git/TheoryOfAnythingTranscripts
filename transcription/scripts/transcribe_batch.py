@@ -3,72 +3,38 @@ import argparse
 import csv
 import json
 import logging
-import re
 import sys
 import time
 import traceback
 import urllib.request
-from datetime import datetime
 from pathlib import Path
 
 from faster_whisper import WhisperModel
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from pdscript.common import (  # noqa: E402
+    build_base_name,
+    now_utc,
+    setup_script_logging,
+    write_manifest_rows,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TRANSCRIPTION_ROOT = REPO_ROOT / "transcription"
 LOGGER = logging.getLogger("transcribe_batch")
 
 
-def setup_logging(log_file: str = "") -> None:
-    LOGGER.setLevel(logging.INFO)
-    LOGGER.handlers.clear()
-    formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
-
-    sh = logging.StreamHandler(sys.stdout)
-    sh.setLevel(logging.INFO)
-    sh.setFormatter(formatter)
-    LOGGER.addHandler(sh)
-
-    if log_file:
-        lp = Path(log_file).expanduser().resolve()
-        lp.parent.mkdir(parents=True, exist_ok=True)
-        fh = logging.FileHandler(lp, encoding="utf-8")
-        fh.setLevel(logging.INFO)
-        fh.setFormatter(formatter)
-        LOGGER.addHandler(fh)
-
-
-def now_utc() -> str:
-    return datetime.utcnow().isoformat(timespec="seconds") + "Z"
-
-
-def load_manifest(path: Path) -> list[dict]:
+def load_manifest(path: Path) -> tuple[list[str], list[dict]]:
     with path.open(newline="", encoding="utf-8") as f:
-        return list(csv.DictReader(f))
+        reader = csv.DictReader(f)
+        rows = list(reader)
+        fieldnames = list(reader.fieldnames or [])
+    return fieldnames, rows
 
 
-def save_manifest(path: Path, rows: list[dict]) -> None:
-    if not rows:
+def save_manifest(path: Path, fieldnames: list[str], rows: list[dict]) -> None:
+    if not fieldnames:
         return
-    with path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-        writer.writeheader()
-        writer.writerows(rows)
-
-
-def slugify(value: str, max_len: int = 80) -> str:
-    value = value.lower().strip()
-    value = re.sub(r"[^a-z0-9]+", "-", value)
-    value = re.sub(r"-{2,}", "-", value).strip("-")
-    if not value:
-        value = "untitled"
-    return value[:max_len].strip("-")
-
-
-def build_base_name(guid: str, title: str, pub_date_iso: str) -> str:
-    date_part = (pub_date_iso or "").strip()[:10] or "unknown-date"
-    title_part = slugify(title, max_len=72)
-    guid_part = (guid or "noguid").replace("-", "")[:8]
-    return f"{date_part}__{title_part}__{guid_part}"
+    write_manifest_rows(path, fieldnames, rows)
 
 
 def migrate_legacy_paths(
@@ -337,12 +303,12 @@ def main() -> None:
     parser.add_argument("--log-file", default="", help="Optional log file path.")
     parser.add_argument("--redo", action="store_true")
     args = parser.parse_args()
-    setup_logging(args.log_file)
+    setup_script_logging(LOGGER, args.log_file)
 
     manifest_path = Path(args.manifest)
     audio_dir = Path(args.audio_dir)
     output_dir = Path(args.output_dir)
-    rows = load_manifest(manifest_path)
+    manifest_fieldnames, rows = load_manifest(manifest_path)
     total_rows = len(rows)
     eligible_rows = [r for r in rows if args.redo or not is_transcribe_complete(r, audio_dir, output_dir)]
     LOGGER.info("Manifest loaded: total=%s, to_process=%s, redo=%s", total_rows, len(eligible_rows), args.redo)
@@ -425,7 +391,7 @@ def main() -> None:
             LOGGER.error("Error on %s: %s", title, row["error"])
             LOGGER.error(traceback.format_exc())
         finally:
-            save_manifest(manifest_path, rows)
+            save_manifest(manifest_path, manifest_fieldnames, rows)
             done_count = sum(1 for r in rows if (r.get("status") or "").strip() == "done")
             err_count = sum(1 for r in rows if (r.get("status") or "").strip() == "error")
             pend_count = sum(

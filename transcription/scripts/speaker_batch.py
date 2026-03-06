@@ -4,13 +4,11 @@ import csv
 import json
 import logging
 import os
-import re
 import subprocess
 import sys
 import threading
 import time
 import traceback
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Optional, Text
 
@@ -20,6 +18,13 @@ import torch
 import torchaudio
 from huggingface_hub import get_token
 from pyannote.audio import Pipeline
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from pdscript.common import (  # noqa: E402
+    build_base_name,
+    now_utc,
+    setup_script_logging,
+    write_manifest_rows,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TRANSCRIPTION_ROOT = REPO_ROOT / "transcription"
@@ -114,29 +119,6 @@ class DiarizationLogHook:
             )
         else:
             self._next_pct_by_step[step] = next_pct + self.progress_step_pct
-
-
-def setup_logging(log_file: str = "") -> None:
-    LOGGER.setLevel(logging.INFO)
-    LOGGER.handlers.clear()
-    formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
-
-    sh = logging.StreamHandler(sys.stdout)
-    sh.setLevel(logging.INFO)
-    sh.setFormatter(formatter)
-    LOGGER.addHandler(sh)
-
-    if log_file:
-        lp = Path(log_file).expanduser().resolve()
-        lp.parent.mkdir(parents=True, exist_ok=True)
-        fh = logging.FileHandler(lp, encoding="utf-8")
-        fh.setLevel(logging.INFO)
-        fh.setFormatter(formatter)
-        LOGGER.addHandler(fh)
-
-
-def now_utc() -> str:
-    return datetime.utcnow().isoformat(timespec="seconds") + "Z"
 
 
 def write_json(path: Path, payload: dict) -> None:
@@ -294,12 +276,9 @@ def load_manifest(path: Path) -> tuple[list[dict], list[str]]:
 
 
 def save_manifest(path: Path, rows: list[dict], fieldnames: list[str]) -> None:
-    if not rows:
+    if not fieldnames:
         return
-    with path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
+    write_manifest_rows(path, fieldnames, rows)
 
 
 def ensure_columns(rows: list[dict], fieldnames: list[str], columns: list[str]) -> list[str]:
@@ -310,22 +289,6 @@ def ensure_columns(rows: list[dict], fieldnames: list[str], columns: list[str]) 
         for r in rows:
             r.setdefault(c, "")
     return out
-
-
-def slugify(value: str, max_len: int = 80) -> str:
-    value = value.lower().strip()
-    value = re.sub(r"[^a-z0-9]+", "-", value)
-    value = re.sub(r"-{2,}", "-", value).strip("-")
-    if not value:
-        value = "untitled"
-    return value[:max_len].strip("-")
-
-
-def build_base_name(guid: str, title: str, pub_date_iso: str) -> str:
-    date_part = (pub_date_iso or "").strip()[:10] or "unknown-date"
-    title_part = slugify(title, max_len=72)
-    guid_part = (guid or "noguid").replace("-", "")[:8]
-    return f"{date_part}__{title_part}__{guid_part}"
 
 
 def ts(seconds: float) -> str:
@@ -594,7 +557,7 @@ def main() -> None:
     parser.add_argument("--log-file", default="", help="Optional log file path.")
     parser.add_argument("--redo", action="store_true")
     args = parser.parse_args()
-    setup_logging(args.log_file)
+    setup_script_logging(LOGGER, args.log_file)
 
     if not hasattr(torchaudio, "list_audio_backends"):
         torchaudio.list_audio_backends = lambda: ["ffmpeg"]  # type: ignore[attr-defined]

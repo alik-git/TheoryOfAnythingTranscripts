@@ -10,6 +10,7 @@ import urllib.request
 import xml.etree.ElementTree as ET
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from pdscript.common import setup_script_logging  # noqa: E402
 from pdscript.config import DEFAULT_CONFIG_PATH, choose_value, get_cfg, load_config  # noqa: E402
 
 
@@ -17,25 +18,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 MANIFEST_CSV = REPO_ROOT / "transcription" / "manifests" / "pipeline_manifest.csv"
 DEFAULT_EPISODES_CSV = REPO_ROOT / "episodes_source.csv"
 LOGGER = logging.getLogger("build_manifest")
-
-
-def setup_logging(log_file: str = "") -> None:
-    LOGGER.setLevel(logging.INFO)
-    LOGGER.handlers.clear()
-    formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
-
-    sh = logging.StreamHandler(sys.stdout)
-    sh.setLevel(logging.INFO)
-    sh.setFormatter(formatter)
-    LOGGER.addHandler(sh)
-
-    if log_file:
-        lp = Path(log_file).expanduser().resolve()
-        lp.parent.mkdir(parents=True, exist_ok=True)
-        fh = logging.FileHandler(lp, encoding="utf-8")
-        fh.setLevel(logging.INFO)
-        fh.setFormatter(formatter)
-        LOGGER.addHandler(fh)
 
 
 def load_existing_manifest(path: Path) -> tuple[list[str], list[dict], dict[str, dict]]:
@@ -167,7 +149,7 @@ def main() -> None:
     if not args.rss_feed_url:
         raise ValueError("Missing required podcast.rss_feed_url (set in config or --rss-feed-url).")
 
-    setup_logging(args.log_file)
+    setup_script_logging(LOGGER, args.log_file)
     episodes_csv = resolve_episodes_csv(args.episodes_csv)
     manifest_csv = Path(args.manifest_csv).expanduser().resolve()
 

@@ -21,3 +21,10 @@ Keep the dev log compact. If a line of investigation is later superseded, remove
 ## Dev Log Format
 Every dev log update must use a proper Markdown heading in the form `## YYYY-MM-DD HH:MM:SS TZ`.
 Do not append loose top-level bullet points without a heading.
+
+## Long-Running Commands
+For long-running commands, always use a persistent PTY session rather than fire-and-forget background execution.
+
+## Logging and Observability
+Prioritize live logging for long-running work.
+Also always write logs to a file so progress can be monitored externally and output is not lost.

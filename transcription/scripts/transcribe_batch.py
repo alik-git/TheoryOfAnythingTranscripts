@@ -164,6 +164,46 @@ def load_model(model_size: str, device: str, compute_type: str) -> WhisperModel:
     return WhisperModel(model_size, device=device, compute_type=compute_type)
 
 
+def _legacy_base_from_guid(guid: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in guid or "")
+
+
+def is_transcribe_complete(row: dict, audio_dir: Path, output_dir: Path) -> bool:
+    guid = (row.get("guid") or "").strip()
+    title = (row.get("title") or "").strip()
+    pub_date_iso = (row.get("pub_date_iso") or "").strip()
+    base_name = build_base_name(guid, title, pub_date_iso)
+    legacy_base = _legacy_base_from_guid(guid)
+
+    audio_candidates: list[Path] = []
+    txt_candidates: list[Path] = []
+    json_candidates: list[Path] = []
+
+    audio_path = (row.get("audio_path") or "").strip()
+    txt_path = (row.get("transcript_txt") or "").strip()
+    json_path = (row.get("transcript_json") or "").strip()
+    if audio_path:
+        audio_candidates.append(Path(audio_path))
+    if txt_path:
+        txt_candidates.append(Path(txt_path))
+    if json_path:
+        json_candidates.append(Path(json_path))
+
+    audio_candidates.append(audio_dir / f"{base_name}.mp3")
+    txt_candidates.append(output_dir / f"{base_name}.txt")
+    json_candidates.append(output_dir / f"{base_name}.json")
+
+    if legacy_base and legacy_base != base_name:
+        audio_candidates.append(audio_dir / f"{legacy_base}.mp3")
+        txt_candidates.append(output_dir / f"{legacy_base}.txt")
+        json_candidates.append(output_dir / f"{legacy_base}.json")
+
+    has_audio = any(p.exists() for p in audio_candidates)
+    has_txt = any(p.exists() for p in txt_candidates)
+    has_json = any(p.exists() for p in json_candidates)
+    return has_audio and has_txt and has_json
+
+
 def transcribe_file(model: WhisperModel, audio_path: Path) -> dict:
     segments, info = model.transcribe(
         str(audio_path),
@@ -304,8 +344,11 @@ def main() -> None:
     output_dir = Path(args.output_dir)
     rows = load_manifest(manifest_path)
     total_rows = len(rows)
-    pending_rows = sum(1 for r in rows if (r.get("status") or "").strip() != "done")
-    LOGGER.info("Manifest loaded: total=%s, to_process=%s, redo=%s", total_rows, pending_rows, args.redo)
+    eligible_rows = [r for r in rows if args.redo or not is_transcribe_complete(r, audio_dir, output_dir)]
+    LOGGER.info("Manifest loaded: total=%s, to_process=%s, redo=%s", total_rows, len(eligible_rows), args.redo)
+    if not eligible_rows:
+        LOGGER.info("No episodes eligible for transcription. Skipping stage.")
+        return
 
     try:
         model = load_model(args.model_size, args.device, args.compute_type)
@@ -326,8 +369,7 @@ def main() -> None:
 
     processed = 0
     for idx, row in enumerate(rows, start=1):
-        status = (row.get("status") or "").strip()
-        if not args.redo and status == "done":
+        if not args.redo and is_transcribe_complete(row, audio_dir, output_dir):
             continue
 
         guid = (row.get("guid") or "").strip() or f"row_{processed}"

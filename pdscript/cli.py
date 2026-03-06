@@ -101,7 +101,11 @@ def run_cmd(cmd: list[str]) -> None:
     LOGGER.info("[run] %s", " ".join(cmd))
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
-    subprocess.run(cmd, check=True, env=env)
+    try:
+        subprocess.run(cmd, check=True, env=env)
+    except subprocess.CalledProcessError as exc:
+        LOGGER.error("[run-failed] exit_code=%s cmd=%s", exc.returncode, " ".join(cmd))
+        raise
 
 
 def add_bool_arg(cmd: list[str], flag: str, enabled: bool) -> None:

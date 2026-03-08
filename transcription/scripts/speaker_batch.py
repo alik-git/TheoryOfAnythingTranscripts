@@ -37,6 +37,7 @@ SPEAKER_COLORS = {
     "SPEAKER_04": "#9467bd",
     "UNKNOWN": "#7f7f7f",
 }
+TARGET_DIARIZATION_SAMPLE_RATE = 16000
 
 
 class DiarizationLogHook:
@@ -495,13 +496,57 @@ def write_markdown(path: Path, title: str, utterances: list[dict], partial: bool
 
 def load_waveform(audio_path: Path) -> tuple[torch.Tensor, int]:
     try:
-        waveform_np, sample_rate = sf.read(str(audio_path), always_2d=True)
+        # Read directly as float32 to avoid large float64 peak memory for long episodes.
+        waveform_np, sample_rate = sf.read(str(audio_path), always_2d=True, dtype="float32")
         waveform_np = np.asarray(waveform_np, dtype=np.float32).T
         waveform = torch.from_numpy(waveform_np)
-        return waveform, int(sample_rate)
     except Exception:
         waveform, sample_rate = torchaudio.load(str(audio_path))
-        return waveform.float(), int(sample_rate)
+        waveform = waveform.float()
+
+    sample_rate = int(sample_rate)
+
+    # Downmix to mono to reduce memory footprint.
+    if waveform.ndim == 2 and waveform.size(0) > 1:
+        waveform = waveform.mean(dim=0, keepdim=True)
+
+    # Normalize diarization input to 16kHz to further reduce memory/compute.
+    if sample_rate != TARGET_DIARIZATION_SAMPLE_RATE:
+        waveform = torchaudio.functional.resample(waveform, sample_rate, TARGET_DIARIZATION_SAMPLE_RATE)
+        sample_rate = TARGET_DIARIZATION_SAMPLE_RATE
+
+    return waveform.contiguous(), sample_rate
+
+
+def prepare_audio_for_diarization(audio_path: Path, prepared_dir: Path) -> Path:
+    """Convert source audio to 16kHz mono WAV to lower diarization memory pressure."""
+    prepared_dir.mkdir(parents=True, exist_ok=True)
+    out_path = prepared_dir / f"{audio_path.stem}.mono16k.wav"
+    if out_path.exists():
+        try:
+            if out_path.stat().st_mtime >= audio_path.stat().st_mtime:
+                return out_path
+        except Exception:
+            return out_path
+
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        "-i",
+        str(audio_path),
+        "-ac",
+        "1",
+        "-ar",
+        str(TARGET_DIARIZATION_SAMPLE_RATE),
+        "-c:a",
+        "pcm_s16le",
+        str(out_path),
+    ]
+    subprocess.run(cmd, check=True)
+    return out_path
 
 
 def diarize_audio(
@@ -598,6 +643,7 @@ def main() -> None:
     md_dir = out_root / "md"
     diar_dir = out_root / "diarization"
     dbg_dir = out_root / "debug"
+    prepared_audio_dir = out_root / "prepared_audio"
 
     rows, fieldnames = load_manifest(manifest_path)
     fieldnames = ensure_columns(
@@ -676,6 +722,19 @@ def main() -> None:
                 raise FileNotFoundError(f"Missing audio file: {audio_path}")
 
             LOGGER.info("[%s] Start: %s", attempted + 1, title)
+            diar_audio_path = audio_path
+            try:
+                stage_ref["stage"] = "audio_preprocess"
+                LOGGER.info("[stage] audio preprocess (ffmpeg 16k mono): %s", title)
+                diar_audio_path = prepare_audio_for_diarization(audio_path, prepared_audio_dir)
+                LOGGER.info("[stage] audio preprocess done: %s -> %s", audio_path.name, diar_audio_path.name)
+            except Exception as prep_exc:
+                LOGGER.warning(
+                    "[warn] audio preprocess failed; using original audio: %s: %s",
+                    type(prep_exc).__name__,
+                    prep_exc,
+                )
+
             stage_ref["stage"] = "diarization"
             monitor_stop, monitor_thread = start_episode_telemetry_monitor(
                 episode_title=title,
@@ -701,7 +760,7 @@ def main() -> None:
             ) as diar_hook:
                 diar_segments = diarize_audio(
                     diar_pipeline,
-                    audio_path,
+                    diar_audio_path,
                     min_speakers=max(1, args.min_speakers),
                     max_speakers=max(1, args.max_speakers),
                     hook=diar_hook,

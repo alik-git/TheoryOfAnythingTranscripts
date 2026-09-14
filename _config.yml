@@ -18,3 +18,20 @@ nav_external_links:
 
 back_to_top: true
 back_to_top_text: Back to top
+
+# Keep development files out of the published website.
+# Retain Jekyll's default dependency exclusions.
+exclude:
+  - AGENTS.md
+  - README.md
+  - dev_log.md
+  - pdscript/
+  - transcription/
+  - pyproject.toml
+  - Gemfile
+  - Gemfile.lock
+  - node_modules/
+  - vendor/bundle/
+  - vendor/cache/
+  - vendor/gems/
+  - vendor/ruby/

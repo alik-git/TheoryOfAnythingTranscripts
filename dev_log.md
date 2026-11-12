@@ -17,3 +17,7 @@ Added episode 149 from the original Apple transcript, with full and focused loca
 ## 2026-11-11 18:01:06 PST
 
 Added episode 150 from its preserved Apple transcript with full and focused local ASR comparisons. Corrected a mid-episode speaker-label inversion using same-episode acoustic controls; preserved qualifications, spoken corrections and uncertain wording. All 1,788 source rows, 465 rendered paragraphs and the Jekyll build verified.
+
+## 2026-11-11 18:15:08 PST
+
+Replaced legacy opening disclaimers with the requested concise AI notice in the small shared footer. Verified all 151 episode pages keep identical transcript bodies and show the notice once at the bottom.

@@ -9,6 +9,7 @@ on:
       - "Gemfile"
       - "Gemfile.lock"
       - "_includes/**"
+      - "_plugins/**"
       - "assets/**"
       - "index.md"
       - "episodes/**"

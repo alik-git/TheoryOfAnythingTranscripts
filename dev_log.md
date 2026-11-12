@@ -21,3 +21,7 @@ Added episode 150 from its preserved Apple transcript with full and focused loca
 ## 2026-11-11 18:15:08 PST
 
 Replaced legacy opening disclaimers with the requested concise AI notice in the small shared footer. Verified all 151 episode pages keep identical transcript bodies and show the notice once at the bottom.
+
+## 2026-11-11 18:19:02 PST
+
+Added episode 151 using the original Apple transcript, full local ASR comparison, focused wording checks and speaker controls. Preserved mathematical caveats, the Coxeter mix-up and spoken slips; resolved a closing negation error. All 613 source rows, 150 paragraphs and the Jekyll build verified.

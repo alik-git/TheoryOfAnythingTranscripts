@@ -25,3 +25,7 @@ Replaced legacy opening disclaimers with the requested concise AI notice in the 
 ## 2026-11-11 18:19:02 PST
 
 Added episode 151 using the original Apple transcript, full local ASR comparison, focused wording checks and speaker controls. Preserved mathematical caveats, the Coxeter mix-up and spoken slips; resolved a closing negation error. All 613 source rows, 150 paragraphs and the Jekyll build verified.
+
+## 2026-11-11 18:34:33 PST
+
+Added episode 152 with full and focused local ASR comparisons and speaker controls. Restored a consequential missing negation, preserved attributed caveats and marked unresolved words. All 496 source rows, 99 paragraphs, homepage links through 152, all 153 footer notices and the Jekyll build verified.

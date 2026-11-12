@@ -18,10 +18,6 @@ Added episode 149 from the original Apple transcript, with full and focused loca
 
 Added episode 150 from its preserved Apple transcript with full and focused local ASR comparisons. Corrected a mid-episode speaker-label inversion using same-episode acoustic controls; preserved qualifications, spoken corrections and uncertain wording. All 1,788 source rows, 465 rendered paragraphs and the Jekyll build verified.
 
-## 2026-11-11 18:15:08 PST
-
-Replaced legacy opening disclaimers with the requested concise AI notice in the small shared footer. Verified all 151 episode pages keep identical transcript bodies and show the notice once at the bottom.
-
 ## 2026-11-11 18:19:02 PST
 
 Added episode 151 using the original Apple transcript, full local ASR comparison, focused wording checks and speaker controls. Preserved mathematical caveats, the Coxeter mix-up and spoken slips; resolved a closing negation error. All 613 source rows, 150 paragraphs and the Jekyll build verified.
@@ -29,3 +25,7 @@ Added episode 151 using the original Apple transcript, full local ASR comparison
 ## 2026-11-11 18:34:33 PST
 
 Added episode 152 with full and focused local ASR comparisons and speaker controls. Restored a consequential missing negation, preserved attributed caveats and marked unresolved words. All 496 source rows, 99 paragraphs, homepage links through 152, all 153 footer notices and the Jekyll build verified.
+
+## 2026-11-11 18:44:03 PST
+
+Applied the requested exact AI-assistance notice above every episode transcript and kept the detailed review note in small text at the bottom of episodes 147–152. All 153 transcript bodies remained identical apart from Jekyll whitespace normalization; placement and the build verified.

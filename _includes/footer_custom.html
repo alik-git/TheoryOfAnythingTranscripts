@@ -1,3 +1,11 @@
 <p class="text-small text-grey-dk-100 mb-0">
-  AI-generated transcripts. May contain mistakes; check the podcast when wording matters.
+  {% if page.nav_order >= 147 and page.nav_order <= 152 %}
+  Edited from the preserved Apple transcript using a separate full speech-recognition pass and focused audio retranscription.
+  No personal auditory listening was performed. Square brackets identify unresolved wording or editorial notices.
+  Unidentified speaker marks insufficiently supported voices and need not identify the same person each time.
+  Spoken qualifications, restarts, repetitions and apparent factual slips are retained. ASR is evidence, not ground truth.
+  {% else %}
+  These transcripts were generated with AI using
+  <a href="https://github.com/alik-git/PodcastTranscriptor">PodcastTranscriptor</a>.
+  {% endif %}
 </p>
